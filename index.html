@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<link href="default.css" rel="stylesheet" type="text/css" />
+<style>
+td,tr,th.border {
+  border: 1px solid black;
+}
+td.nborder {
+  border: none;
+}
+td, th {
+  padding: 2px;
+}
+table {
+  border-spacing: 0px;
+  border-collapse: collapse;
+}
+</style>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>BMS analyzer</title>
+</head>
+<body>
+<h1>BMS analyzer</h1>
+M = <input style="width:calc(100% - 40px)" id="input" onkeyup="calculate()"/><hr>
+<div id="output" style="font-size:16pt;text-align:center"></div>
+<div style="text-align:center" id="output3"><i>n.s. </i><span></span></div>
+<table id="output2"></table>
+</body>
+<h3>Key</h3>
+<span style="background-color:cyan">Cyan</span> - (0,0,0) column, added to the sum.<br>
+<span style="background-color:yellow">Yellow</span> - Simple upgrader.<br>
+<span style="background-color:lime">Green</span> - Ancestor upgrader.<br>
+<span style="color:#bbb">Grayed</span> - Not counted in calculation of o(M,n).<br>
+<script src="bms-analyzer.js"></script>
+</html>

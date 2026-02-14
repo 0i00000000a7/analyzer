@@ -1,0 +1,22 @@
+@font-face {
+    font-family: jetbrains;
+    src: url('../JetBrainsMono-Medium.ttf') format('truetype');
+    font-style: normal;
+}
+
+html,table,button,input,textarea {
+   font-family: jetbrains;
+   font-size: 12px;
+}
+.supsub {
+    display: inline-flex;
+    flex-direction: column;
+    vertical-align: top;
+    margin-top: -.5em;
+    font-size: 80%;
+    padding-top: .05em;
+}
+
+span {
+    padding-top: inherit;
+}

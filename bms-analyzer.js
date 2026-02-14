@@ -1,4 +1,3 @@
-
 /*
 BMS analyzer by Solarzone
 由 FiveYearGaoKao, VeryrrDefine 进行批注和修改
@@ -42,7 +41,6 @@ const OMEGA1 = [ONE, [], []];
  * @type {[[],[[[],[],[]],[],[]],[]]}
  */
 const EPSILON0 = [[], OMEGA1, []];
-
 
 /**
  * 判断一个序数是否为0
@@ -400,7 +398,7 @@ function getAdmIndexOfMatrix(M, n) {
         : ONE;
     return add(
       getAdmIndexOfMatrix(M, findMatrixParentTerm(M, 1, n)),
-      upgradingTermAdm
+      upgradingTermAdm,
     );
   }
   let omega_power_x_counter = ONE;
@@ -417,7 +415,7 @@ function getAdmIndexOfMatrix(M, n) {
   }
   return add(
     getAdmIndexOfMatrix(M, findMatrixParentTerm(M, 1, n)),
-    exp(omega_power_x_counter)
+    exp(omega_power_x_counter),
   );
 }
 
@@ -516,13 +514,13 @@ function standardForm(a) {
   }
   return add(
     sp(standardForm(a[0]), [], standardForm(a[1])),
-    standardForm(a[2])
+    standardForm(a[2]),
   );
 }
 
 function createTable(X) {
   return X.map(
-    (x) => "<tr>" + x.map((y) => "<td>" + y + "</td>").join("") + "</tr>"
+    (x) => "<tr>" + x.map((y) => "<td>" + y + "</td>").join("") + "</tr>",
   ).join("");
 }
 
@@ -541,16 +539,16 @@ function g(a) {
   let first = add(ONE, p);
   let ptr = q;
   while (!isZero(ptr)) {
-    (first = add(first, exp(sub(log(ptr), [a[0], [], []])))), (ptr = ptr[2]);
+    ((first = add(first, exp(sub(log(ptr), [a[0], [], []])))), (ptr = ptr[2]));
   }
   return [first, second];
 }
 
 //Ω_a的简写
 function omega(a) {
-  if (isZero(a)) return "ω";
-  if (eq(a, ONE)) return "Ω";
-  return `Ω<sub>${termToString(a)}</sub>`;
+  if (isZero(a)) return "\\omega";
+  if (eq(a, ONE)) return "\\Omega";
+  return `\\Omega_{${termToString2(a)}}`;
 }
 
 /**
@@ -558,7 +556,7 @@ function omega(a) {
  * @param {Term} q
  * @returns {string}
  */
-function termToString(q) {
+function termToString2(q) {
   if (isZero(q)) {
     return "0";
   }
@@ -566,25 +564,25 @@ function termToString(q) {
     return length1(q).toString();
   }
   let [a, b] = separate(q, firstTerm(q));
-  let m = `ψ<sub>${termToString(a[0])}</sub>(${termToString(a[1])})`;
+  let m = `\\psi_{${termToString2(a[0])}}(${termToString2(a[1])})`;
   if (isZero(a[1])) {
     m = omega(a[0]);
   }
   // if(isZero(a[1])){m=`Ω<sub>${termToString(a[0])}</sub>`;}  //a>0时，ψa(0)=Ω_a
   // if(isZero(a[1])&&eq(a[0],ONE)){m=`Ω`;}  //Ω_1简写为Ω
   if (isZero(a[0])) {
-    m = `ψ(${termToString(a[1])})`;
+    m = `\\psi(${termToString2(a[1])})`;
   } //ψ0(x)简写为ψ(x)
   if (eq(a[0], []) && eq(a[1], ONE)) {
-    m = "ω";
+    m = "\\omega";
   } //ψ(1)=ω
   else if (lt(a[1], [succ(a[0]), [], []])) {
     let [first, second] = g(a);
     m = omega(a[0]);
     if (gt(first, ONE)) {
-      m += `<sup>${termToString(first)}</sup>`;
+      m += `^{${termToString2(first)}}`;
     }
-    if (gt(second, ONE)) m += termToString(second);
+    if (gt(second, ONE)) m += termToString2(second);
   }
   //else if(!eq(log(firstTerm(a)),firstTerm(a))){m=`ω<sup>${termToString(log(a))}</sup>`;}
   //  else if(!le(lastTerm(a[1]),[succ(a[0]),[],[]])&&le(lastTerm(a[1]),[succ(a[0]),[succ(a[0]),[],[]],[]])){
@@ -595,9 +593,18 @@ function termToString(q) {
     m += length1(a);
   }
   if (!isZero(b)) {
-    m += `+${termToString(b)}`;
+    m += `+${termToString2(b)}`;
   }
   return m;
+} /**
+ * 化为可读的字符串
+ * @param {Term} q
+ * @returns {string}
+ */
+function termToString(q) {
+  return katex.renderToString(termToString2(q), {
+    throwOnError: false,
+  });
 }
 
 const EBO = [
@@ -635,7 +642,7 @@ function calculate() {
     M = eval(
       "[" +
         M.replaceAll(")(", "],[").replaceAll("(", "[").replaceAll(")", "]") +
-        "]"
+        "]",
     );
   } catch (e) {
     return;

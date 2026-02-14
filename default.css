@@ -1,6 +1,6 @@
 @font-face {
     font-family: jetbrains;
-    src: url('../JetBrainsMono-Medium.ttf') format('truetype');
+    src: url('./JetBrainsMono-Medium.ttf') format('truetype');
     font-style: normal;
 }
 

@@ -1,0 +1,46 @@
+@font-face {
+  font-family: jetbrains;
+  src: url('JetBrainsMono-Medium.ttf') format('truetype');
+  font-style: normal;
+}
+
+html,
+button,
+input,
+textarea,
+body {
+  font-family: jetbrains, monospace;
+  font-size: 12px;
+}
+
+.supsub {
+  display: inline-flex;
+  flex-direction: column;
+  vertical-align: top;
+  margin-top: -0.5em;
+  font-size: 80%;
+  padding-top: 0.05em;
+}
+
+span {
+  padding-top: inherit;
+}
+
+.mode-btn {
+  border: 1px solid #888;
+  background: #fff;
+  cursor: pointer;
+  padding: 2px 10px;
+  font-size: 12pt;
+  border-radius: 4px;
+  transition: background 0.15s;
+  overflow: hidden;
+}
+.mode-btn.active {
+  background: #d0d8ff;
+  border-color: #66a;
+  font-weight: bold;
+}
+.mode-btn:hover {
+  background: #eef;
+}

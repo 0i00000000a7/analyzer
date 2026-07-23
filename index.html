@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BMS analyzer</title>
+  </head>
+  <body>
+    <h1>BMS analyzer</h1>
+    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
+      <button id="input-mode-bms" class="mode-btn active">BMS</button>
+      <button id="input-mode-0y" class="mode-btn">0-Y</button>
+      <button id="input-mode-bocf" class="mode-btn">BOCF</button>
+      <input style="flex: 1" id="input" />
+    </div>
+    <hr />
+    <div style="display: inline-flex; flex-direction: column; align-items: flex-start; margin: 0 auto">
+      <div style="display: flex; align-items: baseline; gap: 8px">
+        <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">BOCF</span>
+        <span id="output" style="font-size: 16pt"></span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px">
+        <button id="mode-v" class="mode-btn active"></button>
+        <button id="mode-m" class="mode-btn"></button>
+        <label style="display: flex; align-items: center; gap: 4px; margin-left: 12px; font-size: 12pt; cursor: pointer">
+          <input type="checkbox" id="sugar-toggle" checked /> Sugar
+        </label>
+      </div>
+      <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 8px">
+        <span id="output-label" style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">Veblen</span>
+        <span id="output-veblen" style="font-size: 14pt"></span>
+      </div>
+      <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 8px">
+        <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">0-Y</span>
+        <span id="output-0y" style="font-size: 14pt"></span>
+      </div>
+      <pre id="output-ast" style="display: none; font-size: 11pt; line-height: 1.4; margin: 8px 0 0 0"></pre>
+      <div id="bms-output-row" style="display: none; align-items: center; gap: 8px; margin-top: 6px">
+        <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">BMS</span>
+        <button id="bms-mode-matrix" class="mode-btn">Matrix</button>
+        <button id="bms-mode-flat" class="mode-btn active">Flat</button>
+        <button id="bocf-to-bms-btn" style="display: none; font-size: 10pt">Convert</button>
+        <span
+          id="bms-status"
+          style="
+            display: none;
+            font-size: 10pt;
+            color: #888;
+            max-width: 400px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          "
+        ></span>
+        <span id="output-bms" style="font-size: 11pt; font-family: monospace; color: #444; word-break: break-all"></span>
+      </div>
+      <div
+        id="expand-row"
+        style="display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 8px; border-top: 1px solid #ccc"
+      >
+        <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">Expand</span>
+        <button id="expand-btn" style="font-size: 11pt">Expand</button>
+        <span style="font-size: 10pt; color: #888">fs:</span>
+        <input id="expand-fs" type="number" value="3" min="1" max="20" style="width: 50px; font-size: 11pt" />
+        <span id="output-expand" style="font-size: 11pt; font-family: monospace; color: #444; word-break: break-all"></span>
+      </div>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

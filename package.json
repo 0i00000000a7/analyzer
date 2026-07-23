@@ -1,0 +1,23 @@
+{
+  "name": "bms-analyzer",
+  "version": "2.0.0",
+  "private": true,
+  "description": "BMS to ordinal analyzer — C++/WASM core with Vite + TypeScript",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "em++ -std=c++20 -O3 -flto -fomit-frame-pointer -fno-exceptions -I src/cpp -lembind -o src/wasm/bms-core.js -sEXPORT_ES6 -sMODULARIZE -sEXPORT_NAME=BmsModule -sFILESYSTEM=0 -sSTACK_SIZE=512KB -sSINGLE_FILE -sENVIRONMENT=web -sDISABLE_EXCEPTION_CATCHING=1 src/cpp/bindings.cpp src/cpp/ordinal.cpp src/cpp/parser.cpp",
+    "dev": "vite",
+    "build": "pnpm build:wasm && vite build",
+    "preview": "vite preview",
+    "test": "node src/ts/run-tests.js"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "vite": "8.1.4"
+  },
+  "dependencies": {
+    "@rolldown/binding-linux-arm64-gnu": "^1.2.0",
+    "katex": "^0.17.0",
+    "lightningcss-linux-arm64-gnu": "^1.33.0"
+  }
+}

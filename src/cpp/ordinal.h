@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct Term;
@@ -72,6 +73,13 @@ int subscriptDepth(TermPtr t);
 TermPtr mergePsiAddends(TermPtr a, TermPtr b, TermPtr c);
 TermPtr standardForm(TermPtr a);
 
+// Fundamental sequences
+bool isSucc(TermPtr a);
+TermPtr pred(TermPtr a);
+TermPtr cofinality(TermPtr a);
+TermPtr fundamentalSequence(TermPtr a, int n);
+TermPtr fundamentalSequence(TermPtr a, TermPtr index);
+
 using MatrixRow = std::vector<int>;
 using Matrix = std::vector<MatrixRow>;
 
@@ -84,9 +92,21 @@ TermPtr NotStandardExprFromColumn(const Matrix &M, int n);
 TermPtr BMSToBocf(const Matrix &M);
 
 // 0-Y and expansion utilities
+using Mountain = std::vector<std::vector<std::pair<int, int>>>;
+Mountain buildMountain(const std::vector<int> &seq);
 Matrix zeroYToBMS(const std::vector<int> &seq);
+std::vector<int> zeroYExpand(const std::vector<int> &seq, int n);
+std::string zeroYExpand(const std::string &seqStr, int n);
 std::string bmsTo0YSequence(const Matrix &M);
 Matrix expandBMS(const Matrix &M, int fs);
+Matrix triangularToBMS(const Matrix &M);
+Matrix bmsToTriangular(const Matrix &M);
+
+// 1-Y ↔ DBMS conversion (below [1,3] = triangular BMS)
+Matrix oneYToDBMS(const std::vector<int> &seq);
+std::vector<int> dbmsToOneY(const Matrix &dbms);
+std::string dbmsToString(const Matrix &dbms);
+Matrix dbmsToBMS(const Matrix &dbms);
 
 // Matrix comparison
 int matrixLexOrder(const Matrix &a, const Matrix &b);

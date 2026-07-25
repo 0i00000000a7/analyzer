@@ -1,9 +1,9 @@
 #include "ordinal.h"
 #include <algorithm>
+#include <cstdio>
 #include <map>
 #include <sstream>
 #include <vector>
-#include <cstdio>
 
 // ── Detailed profiler ──
 // (removed)
@@ -52,6 +52,37 @@ TermPtr lastTerm(TermPtr a) {
 // ============================================================
 // Arithmetic
 // ============================================================
+
+/// Natural number n as an ordinal
+static TermPtr fromInt(int n) {
+  TermPtr r = ZERO();
+  for (int i = 0; i < n; i++)
+    r = add(r, ONE());
+  return r;
+}
+
+bool isSucc(TermPtr a) {
+  if (isZero(a))
+    return false;
+  TermPtr last = lastTerm(a);
+  // last term is ψ₀(0) = 1 (i.e., α = X + 1)
+  return isZero(last->a) && isZero(last->b);
+}
+
+TermPtr pred(TermPtr a) {
+  if (!isSucc(a))
+    return a;
+  // Rebuild sum without the last term (= ψ₀(0))
+  TermPtr r = ZERO();
+  TermPtr cur = a;
+  while (!isZero(cur)) {
+    if (isZero(cur->c))
+      break; // last term — skip
+    r = add(r, T(cur->a, cur->b, ZERO()));
+    cur = cur->c;
+  }
+  return r;
+}
 
 TermPtr add(TermPtr a, TermPtr b) {
   if (isZero(a))
@@ -199,515 +230,138 @@ TermPtr standardForm(TermPtr a) {
 }
 
 // ============================================================
-// BMS analysis
+static bool isFiniteNat(TermPtr t) {
+  if (isZero(t))
+    return true;
+  if (!isZero(t->a) || !isZero(t->b))
+    return false;
+  return isFiniteNat(t->c);
+}
+
+// Fundamental sequences for Extended Buchholz's ψ
 // ============================================================
 
-const Matrix EBO = {{0, 0, 0}, {1, 1, 1}, {2, 1, 1}, {3, 1, 0}, {2, 0, 0}};
-
-// ── Parent cache (built once per BMSToBocf call) ──
-static std::vector<std::vector<int>> g_parentCache;
-static bool g_parentCacheReady = false;
-static std::vector<std::vector<int>> g_childrenCache;
-
-static void buildParentCache(const Matrix &M) {
-  int l = (int)M.size();
-  int rows = 0;
-  for (int i = 0; i < l; i++)
-    if ((int)M[i].size() > rows)
-      rows = (int)M[i].size();
-
-  // Pad matrix columns to uniform row count
-  std::vector<std::vector<int>> S(l);
-  for (int i = 0; i < l; i++) {
-    S[i] = M[i];
-    while ((int)S[i].size() < rows)
-      S[i].push_back(0);
-  }
-
-  g_parentCache.assign(l, std::vector<int>());
-  for (int row = 0; row < rows; row++) {
-    if (row == 0) {
-      // Row 0: monotonic stack — O(cols)
-      std::vector<int> stack;
-      stack.reserve(l);
-      for (int col = 0; col < l; col++) {
-        while (!stack.empty() && S[stack.back()][0] >= S[col][0]) {
-          stack.pop_back();
-        }
-        g_parentCache[col].push_back(stack.empty() ? -1 : stack.back());
-        stack.push_back(col);
-      }
-    } else {
-      // Rows > 0: follow parent chain from row above
-      for (int col = 0; col < l; col++) {
-        int k = col;
-        while (k >= 0 && S[k][row] >= S[col][row]) {
-          k = g_parentCache[k][row - 1];
-        }
-        g_parentCache[col].push_back(k);
-      }
-    }
-  }
-  g_parentCacheReady = true;
-
-  // Build children cache from row-0 parents
-  g_childrenCache.assign(l, std::vector<int>());
-  for (int i = 0; i < l; i++) {
-    int p = g_parentCache[i][0];
-    if (p >= 0) {
-      g_childrenCache[p].push_back(i);
-    }
-  }
-}
-
-int findParent(const Matrix &M, int findRow, int relativeColumn) {
-  if (g_parentCacheReady) {
-    if (findRow == -1)
-      return relativeColumn - 1;
-    return g_parentCache[relativeColumn][findRow];
-  }
-  // Fallback (no cache — shouldn't be reached for normal BMSToBocf calls)
-  if (findRow == -1) {
-    return relativeColumn - 1;
-  }
-  int curColumn = findParent(M, findRow - 1, relativeColumn);
-  while (curColumn > -1 && M[curColumn][findRow] >= M[relativeColumn][findRow]) {
-    curColumn = findParent(M, findRow - 1, curColumn);
-  }
-  return curColumn;
-}
-
-std::vector<int> children(const Matrix &M, int n) {
-  if (g_parentCacheReady) {
-    return g_childrenCache[n];
-  }
-  // Fallback (no cache)
-  std::vector<int> X;
-  for (int i = 0; i < (int)M.size(); i++) {
-    if (findParent(M, 0, i) == n) {
-      X.push_back(i);
-    }
-  }
-  return X;
-}
-
-// ── Upgrader cache (−2 = not computed, −1 = none, ≥0 = index) ──
-static std::vector<int> g_upgraderCache;
-
-int getUpgrader(const Matrix &M, int n) {
-  // Check cache
-  if ((size_t)n < g_upgraderCache.size()) {
-    int cached = g_upgraderCache[n];
-    if (cached != -2)
-      return cached;
-  }
-  // Compute
-  int result;
-  if (M[n].size() < 3 || M[n][1] == 0 || M[n][2] == 1 || n + 1 >= (int)M.size()) {
-    result = -1;
-    goto done;
-  }
-  { int m = findParent(M, 1, n);
-  if (m < 0 || m >= (int)M.size()) {
-    result = -1;
-    goto done;
-  }
-  MatrixRow L = {M[m][0] + 1, M[n][1], M[m][2] + 1};
-
-  if (findParent(M, 1, n) == findParent(M, 1, n + 1)) {
-    bool match = (M[n + 1].size() >= 3 && M[n + 1][0] == L[0] && M[n + 1][1] == L[1] && M[n + 1][2] == L[2]);
-    if (match) {
-      result = n + 1;
-      goto done;
-    }
-  }
-
-  int q = n;
-  while (q != -1) {
-    q = findParent(M, 0, q);
-    if (q == -1)
-      break;
-    if (findParent(M, 1, n) == findParent(M, 1, q)) {
-      bool match = (M[q].size() >= 3 && M[q][0] == L[0] && M[q][1] == L[1] && M[q][2] == L[2]);
-      if (match && n + 1 < (int)M.size() && M[n + 1][0] > M[q][0]) {
-        result = q;
-        goto done;
-      }
-    }
-  }
-  result = -1;
-  }
-done:
-  if (g_upgraderCache.empty())
-    g_upgraderCache.assign(M.size(), -2);
-  if ((size_t)n >= g_upgraderCache.size())
-    g_upgraderCache.resize(n + 1, -2);
-  g_upgraderCache[n] = result;
-  return result;
-}
-
-
-static bool rowEq3(const MatrixRow &r, int a, int b, int c) { return r.size() >= 3 && r[0] == a && r[1] == b && r[2] == c; }
-
-// ── Column result cache (populated on demand, cleared per BMSToBocf call) ──
-static std::vector<TermPtr> g_columnCache;
-static std::vector<bool> g_columnCached;
-static TermPtr getCachedNotStandardExpr(const Matrix &M, int n);
-
-// ── Index-of-column cache ──
-static std::vector<TermPtr> g_indexCache;
-static std::vector<bool> g_indexCached;
-static TermPtr getCachedIndexOfColumn(const Matrix &M, int n);
-
-
-TermPtr getIndexOfColumn(const Matrix &M, int n) {
-  if (M[n].size() < 2 || M[n][1] == 0) {
+/// Cofinality (returns 0, 1, ω (=ψ₀(1)), or a regular cardinal Ωα)
+TermPtr cofinality(TermPtr a) {
+  if (isZero(a))
     return ZERO();
-  }
-  if (M[n].size() < 3 || M[n][2] == 0) {
-    int upgradeIdx = getUpgrader(M, n);
-    TermPtr upgradingTermAdm = (upgradeIdx >= 0) ? lastTerm(getCachedIndexOfColumn(M, upgradeIdx)) : ONE();
-    return add(getCachedIndexOfColumn(M, findParent(M, 1, n)), upgradingTermAdm);
-  }
+  TermPtr last = lastTerm(a);
+  if (!eq(last, a))
+    return cofinality(last);
 
-  TermPtr omega_power_x_counter = ONE();
-  for (int i : children(M, n)) {
-    if (M[i].size() < 3)
-      continue;
-    if (!rowEq3(M[i], M[n][0] + 1, M[n][1], 1)) {
-      continue;
-    }
-    TermPtr q = ZERO();
-    for (int j : children(M, i)) {
-      q = add(q, getCachedNotStandardExpr(M, j));
-    }
-    omega_power_x_counter = add(omega_power_x_counter, exp(q));
+  TermPtr beta = a->a, gamma = a->b;
+  if (isZero(gamma)) {
+    if (isZero(beta))
+      return ONE(); // ψ₀(0) → 1
+    TermPtr cfBeta = cofinality(beta);
+    if (eq(cfBeta, ONE()))
+      return a;    // succ subscript → regular
+    return cfBeta; // limit subscript → cof(subscript)
   }
-  return add(getCachedIndexOfColumn(M, findParent(M, 1, n)), exp(omega_power_x_counter));
+  TermPtr cfGamma = cofinality(gamma);
+  if (eq(cfGamma, ONE()))
+    return OMEGA(); // succ argument → ω
+  // Compare Cof(γ) with the subscript β (JS: compare(cf_a, v) ≤ 0)
+  if (!lt(beta, cfGamma))
+    return cfGamma; // β ≥ Cof(γ) → Cof(γ) ≤ β
+  return OMEGA();   // β < Cof(γ) → ω
 }
 
-TermPtr NotStandardExprFromColumn(const Matrix &M, int n) {
-  TermPtr omegaMultiplication = ZERO();
-  { // upgrader section
-    for (int i : children(M, n)) {
-      if (M[i].size() >= 3 && rowEq3(M[i], M[n][0] + 1, M[n][1], 1)) {
-        continue;
-      }
-      bool isUpgrader = std::find(g_upgraderCache.begin(), g_upgraderCache.end(), i) != g_upgraderCache.end();
-      if (isUpgrader) {
-        auto c = children(M, i);
-        if (!c.empty()) {
-          if (M[c.back()].size() >= 3 && rowEq3(M[c.back()], M[i][0] + 1, M[i][1], 1)) {
-            continue;
-          }
-        } else {
-          continue;
-        }
-      }
-      omegaMultiplication = add(omegaMultiplication, getCachedNotStandardExpr(M, i));
-    }
-  }
-
-  TermPtr result = T(getCachedIndexOfColumn(M, n), omegaMultiplication, ZERO());
-  return result;
-}
-
-// ── Column result cache implementation ──
-static TermPtr getCachedNotStandardExpr(const Matrix &M, int n) {
-  if (g_columnCached.size() > (size_t)n && g_columnCached[n]) {
-    return g_columnCache[n];
-  }
-  TermPtr result = NotStandardExprFromColumn(M, n);
-  if (g_columnCached.size() <= (size_t)n) {
-    g_columnCache.resize(n + 1);
-    g_columnCached.resize(n + 1, false);
-  }
-  g_columnCache[n] = result;
-  g_columnCached[n] = true;
-  return result;
-}
-
-static TermPtr getCachedIndexOfColumn(const Matrix &M, int n) {
-  if (g_indexCached.size() > (size_t)n && g_indexCached[n]) {
-    return g_indexCache[n];
-  }
-  TermPtr result = getIndexOfColumn(M, n);
-  if (g_indexCached.size() <= (size_t)n) {
-    g_indexCache.resize(n + 1);
-    g_indexCached.resize(n + 1, false);
-  }
-  g_indexCache[n] = result;
-  g_indexCached[n] = true;
-  return result;
-}
-
-TermPtr BMSToBocf(const Matrix &M) {
-  buildParentCache(M);
-
-  // Precompute upgrader cache for the entire matrix
-  int l = (int)M.size();
-  g_upgraderCache.assign(l, -2);
-  for (int x = 0; x < l; x++) {
-    g_upgraderCache[x] = getUpgrader(M, x);
-  }
-
-  TermPtr S = ZERO();
-  for (int i = 0; i < (int)M.size(); i++) {
-    if (M[i].size() >= 1 && M[i][0] == 0 && (M[i].size() < 2 || M[i][1] == 0) && (M[i].size() < 3 || M[i][2] == 0)) {
-      S = add(S, getCachedNotStandardExpr(M, i));
-    }
-  }
-  g_parentCacheReady = false;
-  g_parentCache.clear();
-  g_childrenCache.clear();
-  g_upgraderCache.clear();
-  g_columnCache.clear();
-  g_columnCached.clear();
-  g_indexCache.clear();
-  g_indexCached.clear();
-  TermPtr result = standardForm(S);
-  return result;
-}
-
-// ============================================================
-// 0-Y sequence to BMS matrix conversion
-// ============================================================
-
-Matrix zeroYToBMS(const std::vector<int> &seq) {
-  int l = (int)seq.size();
-  Matrix res(l);
-  std::vector<int> parents(l);
-  for (int i = 0; i < l; i++) {
-    parents[i] = i - 1;
-  }
-  std::vector<int> cur(seq.begin(), seq.end());
-
+static TermPtr sumWithoutLast(TermPtr a) {
+  if (isZero(a))
+    return ZERO();
+  TermPtr r = ZERO(), cur = a;
   while (true) {
-    std::vector<int> next(l);
-    bool hasParent = false;
-
-    for (int i = 0; i < l; i++) {
-      int k = i;
-      while (k >= 0 && cur[k] >= cur[i]) {
-        k = parents[k];
-      }
-      parents[i] = k;
-      if (k >= 0) {
-        hasParent = true;
-        next[i] = cur[i] - cur[k];
-        int row = (int)res[i].size();
-        res[i].push_back(res[k][row] + 1);
-      } else {
-        next[i] = 1;
-        res[i].push_back(0);
-      }
-    }
-
-    if (!hasParent)
+    if (isZero(cur))
       break;
-    cur = std::move(next);
+    if (isZero(cur->c))
+      break;
+    r = add(r, T(cur->a, cur->b, ZERO()));
+    cur = cur->c;
   }
-
-  // Remove the last row (all-1s iteration)
-  for (int i = 0; i < l; i++) {
-    if (!res[i].empty())
-      res[i].pop_back();
-  }
-
-  // Pad to uniform length
-  size_t maxRows = 0;
-  for (int i = 0; i < l; i++) {
-    if (res[i].size() > maxRows)
-      maxRows = res[i].size();
-  }
-  for (int i = 0; i < l; i++) {
-    while (res[i].size() < maxRows)
-      res[i].push_back(0);
-  }
-
-  return res;
+  return r;
 }
 
-// ============================================================
-// BMS matrix to 0-Y sequence conversion
-// ============================================================
+/// Fundamental sequence α[n] for integer index n (JS BOCF_EBO.ts logic)
+TermPtr fundamentalSequence(TermPtr a, int n) {
+  if (isZero(a))
+    return ZERO();
 
-/// Convert a BMS matrix to its equivalent 0-Y sequence string.
-/// Uses monotonic stack for O(rows × cols) parent-finding per row.
-std::string bmsTo0YSequence(const Matrix &M) {
-  int cols = (int)M.size();
-  if (cols == 0)
-    return "";
-  int rows = (int)M[0].size();
+  // Sum: α[n] = first + last[n]
+  TermPtr last = lastTerm(a);
+  if (!eq(last, a))
+    return add(sumWithoutLast(a), fundamentalSequence(last, n));
 
-  // Pad matrix to uniform row count
-  Matrix S(cols);
-  for (int i = 0; i < cols; i++) {
-    S[i] = M[i];
-    while ((int)S[i].size() < rows)
-      S[i].push_back(0);
+  TermPtr beta = a->a, gamma = a->b;
+
+  if (isZero(gamma)) {
+    // ψβ(0)
+    if (isZero(beta))
+      return ZERO(); // ψ₀(0)[n] = 0 (rule 3)
+    TermPtr cfBeta = cofinality(beta);
+    if (eq(cfBeta, ONE()))
+      return fromInt(n);                                    // succ β → n (rule 4)
+    return T(fundamentalSequence(beta, n), ZERO(), ZERO()); // limit β → ψβ[n](0) (rule 5)
   }
 
-  std::vector<int> result(cols, 1);
+  TermPtr cfGamma = cofinality(gamma);
 
-  // Process rows from bottom to top
-  for (int row = rows - 1; row >= 0; row--) {
-    std::vector<int> stack;
-    stack.reserve(cols);
-    for (int col = 0; col < cols; col++) {
-      while (!stack.empty() && S[stack.back()][row] >= S[col][row]) {
-        stack.pop_back();
-      }
-      if (!stack.empty()) {
-        result[col] += result[stack.back()];
-      }
-      stack.push_back(col);
-    }
+  if (eq(cfGamma, ONE())) {
+    // Cof(γ) = 1 → succ argument (rule 6): ψβ(γ[0]) repeated n times
+    TermPtr gamma0 = fundamentalSequence(gamma, 0);
+    return mulFinite(T(beta, gamma0, ZERO()), fromInt(n));
   }
 
-  // Format as comma-separated string
-  std::string out;
-  for (int i = 0; i < cols; i++) {
-    if (i > 0)
-      out += ",";
-    out += std::to_string(result[i]);
+  // Compare Cof(γ) with β (JS: compare(cf_a, v) ≤ 0 → rule 07)
+  if (!lt(beta, cfGamma)) {
+    // β ≥ Cof(γ) → Cof(γ) ≤ β (rule 7): ψβ(γ[n])
+    return T(beta, fundamentalSequence(gamma, n), ZERO());
   }
-  return out;
+
+  // β < Cof(γ) (rule 8): iterate Re with JS-style n-iteration loop.
+  // For successor cardinals Ω_{δ+1}, extract δ and use ψ_δ in the loop.
+  if (!isZero(cfGamma) && !isZero(cfGamma->a) && isSucc(cfGamma->a)) {
+    TermPtr delta = sub(cfGamma->a, ONE()); // δ = pred(cofinality subscript)
+    TermPtr re = ZERO();
+    for (int i = 0; i < n; i++)
+      re = fundamentalSequence(gamma, T(delta, re, ZERO()));
+    return T(beta, re, ZERO());
+  }
+  // Non-successor-cardinal cofinalities: fallback to ψβ(γ[n])
+  return T(beta, fundamentalSequence(gamma, n), ZERO());
 }
 
-// ============================================================
-// BMS matrix expansion (BMS → 0-Y style expand)
-// ============================================================
+/// Fundamental sequence α[β] for ordinal index β (used internally by rule 8)
+TermPtr fundamentalSequence(TermPtr a, TermPtr index) {
+  TermPtr last = lastTerm(a);
+  if (!eq(last, a))
+    return add(sumWithoutLast(a), fundamentalSequence(last, index));
 
-Matrix expandBMS(const Matrix &M, int fs) {
-  int l = (int)M.size();
-  if (l == 0)
-    return {};
+  if (isFiniteNat(index))
+    return fundamentalSequence(a, length1(index));
 
-  // Determine row count
-  int rows = 0;
-  for (int i = 0; i < l; i++) {
-    if ((int)M[i].size() > rows)
-      rows = (int)M[i].size();
-  }
+  TermPtr beta = a->a, gamma = a->b;
 
-  // Build uniform matrix (pad with 0)
-  Matrix S(l);
-  for (int i = 0; i < l; i++) {
-    S[i] = M[i];
-    while ((int)S[i].size() < rows)
-      S[i].push_back(0);
-  }
-
-  // Calculate parent matrix: parents[col][row]
-  std::vector<std::vector<int>> parents(l);
-  for (int row = 0; row < rows; row++) {
-    if (row == 0) {
-      std::vector<int> stack;
-      stack.reserve(l);
-      for (int col = 0; col < l; col++) {
-        while (!stack.empty() && S[stack.back()][0] >= S[col][0]) {
-          stack.pop_back();
-        }
-        parents[col].push_back(stack.empty() ? -1 : stack.back());
-        stack.push_back(col);
-      }
-    } else {
-      for (int col = 0; col < l; col++) {
-        int k = col;
-        while (k >= 0 && S[k][row] >= S[col][row]) {
-          k = parents[k][row - 1];
-        }
-        parents[col].push_back(k);
-      }
+  if (isZero(gamma)) {
+    if (isZero(beta))
+      return ZERO();
+    TermPtr cfBeta = cofinality(beta);
+    if (eq(cfBeta, ONE())) {
+      if (lt(index, a))
+        return index;
+      return ZERO();
     }
+    return T(fundamentalSequence(beta, index), ZERO(), ZERO());
   }
 
-  // Find the highest non-zero row in the last column
-  int x = -1;
-  while (x + 1 < rows && S[l - 1][x + 1] > 0) {
-    x++;
-  }
+  TermPtr cfGamma = cofinality(gamma);
+  if (eq(cfGamma, ONE()))
+    return fundamentalSequence(a, length1(index));
 
-  // Not a limit ordinal — just remove the last column
-  Matrix res;
-  if (x < 0) {
-    for (int i = 0; i < l - 1; i++)
-      res.push_back(S[i]);
-    return res;
-  }
+  if (!lt(beta, cfGamma))
+    return T(beta, fundamentalSequence(gamma, index), ZERO());
 
-  int badRoot = parents[l - 1][x];
-
-  // If bad root is -1 at row x, fall back to row 0
-  if (badRoot < 0) {
-    badRoot = parents[l - 1][0];
-    if (badRoot < 0) {
-      // Still no parent — just remove the last column
-      Matrix res;
-      for (int i = 0; i < l - 1; i++)
-        res.push_back(S[i]);
-      return res;
-    }
-  }
-
-  int badLength = l - 1 - badRoot;
-
-  // Ascension values for rows below x
-  std::vector<int> ascValue(rows, 0);
-  for (int i = 0; i < x; i++) {
-    ascValue[i] = S[l - 1][i] - S[badRoot][i];
-  }
-
-  // Ascension matrix
-  std::vector<std::vector<int>> ascMat(badLength, std::vector<int>(rows, 0));
-  for (int i = 0; i < x; i++) {
-    for (int j = 0; j < badLength; j++) {
-      int k = j + badRoot;
-      while (k > badRoot) {
-        k = parents[k][i];
-      }
-      ascMat[j][i] = (k == badRoot ? 1 : 0);
-    }
-  }
-
-  // Build result: keep all columns except the last
-  for (int i = 0; i < l - 1; i++) {
-    res.push_back(S[i]);
-  }
-
-  // Expand: repeat bad part with ascension
-  for (int step = 1; step <= fs; step++) {
-    for (int j = badRoot; j < l - 1; j++) {
-      MatrixRow col(rows);
-      for (int k = 0; k < rows; k++) {
-        col[k] = S[j][k] + ascValue[k] * step * ascMat[j - badRoot][k];
-      }
-      res.push_back(col);
-    }
-  }
-
-  return res;
-}
-
-// ============================================================
-// Lexicographic order on matrices
-// ============================================================
-
-int matrixLexOrder(const Matrix &a, const Matrix &b) {
-  size_t maxRows = std::max(a.size(), b.size());
-  for (size_t i = 0; i < maxRows; i++) {
-    size_t maxCols = std::max(a.size() > i ? a[i].size() : 0, b.size() > i ? b[i].size() : 0);
-    for (size_t j = 0; j < maxCols; j++) {
-      int va = (i < a.size() && j < a[i].size()) ? a[i][j] : 0;
-      int vb = (i < b.size() && j < b[i].size()) ? b[i][j] : 0;
-      if (va > vb)
-        return 1;
-      if (va < vb)
-        return -1;
-    }
-  }
-  return 0;
+  return fundamentalSequence(a, length1(index));
 }
 
 // ============================================================
@@ -796,14 +450,27 @@ static std::string renderTerm(TermPtr q) {
   }
   if (isZero(a0) && eq(a1, ONE())) {
     m = "\\omega";
-  } else if (lt(a1, T(succ(a0), ZERO(), ZERO()))) {
+  } else if (lt(a1, T(succ(a0), ZERO(), ZERO())) && !eq(a1, T(succ(a0), ZERO(), ZERO()))) {
     auto [first, second] = decomposePower(aPart);
-    m = omegaStr(a0);
-    if (gt(first, ONE())) {
-      m += "^{" + renderTerm(first) + "}";
-    }
-    if (gt(second, ONE())) {
-      m += renderTerm(second);
+    // Fixed point check: if first equals the whole term, skip ω-power rendering
+    if (eq(first, aPart)) {
+      // fall through to default ψ rendering (m already set above)
+    } else {
+      m = omegaStr(a0);
+      if (gt(first, ONE())) {
+        m += "^{" + renderTerm(first) + "}";
+      }
+      if (gt(second, ONE())) {
+        m += renderTerm(second);
+      }
+      int len = length1(aPart);
+      if (len > 1)
+        m += std::to_string(len);
+      if (!isZero(bPart)) {
+        m += "+" + renderTerm(bPart);
+      }
+      g_renderCache[q] = m;
+      return m;
     }
   }
 
@@ -822,14 +489,6 @@ static std::string renderTerm(TermPtr q) {
 // Extended Veblen conversion (arXiv-2310.12832v2)
 // Implements ψ₀(α) = φ V(t(α)) with @ notation
 // ============================================================
-
-static bool isFiniteNat(TermPtr t) {
-  if (isZero(t))
-    return true;
-  if (!isZero(t->a) || !isZero(t->b))
-    return false;
-  return isFiniteNat(t->c);
-}
 
 static bool isBelowBHO(TermPtr q) { return lt(q, BHO()); }
 

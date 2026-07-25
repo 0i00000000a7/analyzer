@@ -1,0 +1,83 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: latest
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Setup emscripten
+        uses: emscripten-core/setup-emsdk@v16
+        with:
+          version: 3.1.73
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Create wasm directory
+        run: mkdir -p src/wasm
+
+      - name: Build WASM + Vite
+        run: pnpm build
+
+      - name: Copy .nojekyll
+        run: cp .nojekyll dist/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+          include-hidden-files: true
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v5
+
+  build-cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: ubuntu-24.04-arm
+            target: linux-aarch64
+          - os: windows-latest
+            target: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build CLI (${{ matrix.target }})
+        run: bash scripts/build-cli.sh ${{ matrix.target }}
+
+      - name: Upload CLI to release
+        uses: softprops/action-gh-release@v3
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: analyzer-cli-${{ matrix.target }}${{ matrix.target == 'windows-x86_64' && '.exe' || '' }}

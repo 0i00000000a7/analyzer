@@ -1,5 +1,7 @@
+#include "1y.h"
 #include "ordinal.h"
 #include "parser.h"
+#include "wy.h"
 #include <emscripten.h>
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
@@ -126,6 +128,20 @@ val zeroYToBMSJS(const val &jsSeq) {
   return result;
 }
 
+val zeroYExpandJS(const val &jsSeq, int n) {
+  int len = jsSeq["length"].as<int>();
+  std::vector<int> seq;
+  for (int i = 0; i < len; i++) {
+    seq.push_back(jsSeq[i].as<int>());
+  }
+  auto result = zeroYExpand(seq, n);
+  val jsResult = val::array();
+  for (auto v : result) {
+    jsResult.call<void>("push", v);
+  }
+  return jsResult;
+}
+
 val parseAndEvalBOCF(const std::string &input) {
   val result = val::object();
   g_errorMsg.clear();
@@ -170,6 +186,24 @@ std::string bmsTo0YSequenceJS(const val &jsMatrix) {
 
 int subscriptDepthJS(const val &jsTerm) { return subscriptDepth(termFromJS(jsTerm)); }
 
+val fundamentalSequenceJS(const val &jsTerm, int n) {
+  TermPtr t = termFromJS(jsTerm);
+  TermPtr result = fundamentalSequence(t, n);
+  val r = val::object();
+  r.set("term", termToString(result, false));
+  r.set("termJS", termToJS(result));
+  return r;
+}
+
+val cofinalityJS(const val &jsTerm) {
+  TermPtr t = termFromJS(jsTerm);
+  TermPtr result = cofinality(t);
+  val r = val::object();
+  r.set("term", termToString(result, false));
+  r.set("termJS", termToJS(result));
+  return r;
+}
+
 val termToVeblenJS(const val &jsTerm) {
   TermPtr t = termFromJS(jsTerm);
   val result = val::object();
@@ -203,16 +237,271 @@ val bocfToBMSJS(const std::string &input, val progressCB) {
   return result;
 }
 
+val triangularToBMSJS(const val &jsMatrix) {
+  Matrix M = jsArrayToMatrix(jsMatrix);
+  Matrix result = triangularToBMS(M);
+  val jsResult = val::array();
+  for (size_t i = 0; i < result.size(); i++) {
+    val col = val::array();
+    for (size_t j = 0; j < result[i].size(); j++) {
+      col.call<void>("push", result[i][j]);
+    }
+    jsResult.call<void>("push", col);
+  }
+  return jsResult;
+}
+
+val bmsToTriangularJS(const val &jsMatrix) {
+  Matrix M = jsArrayToMatrix(jsMatrix);
+  Matrix result = bmsToTriangular(M);
+  val jsResult = val::array();
+  for (size_t i = 0; i < result.size(); i++) {
+    val col = val::array();
+    for (size_t j = 0; j < result[i].size(); j++) {
+      col.call<void>("push", result[i][j]);
+    }
+    jsResult.call<void>("push", col);
+  }
+  return jsResult;
+}
+
+val buildMountainJS(const val &jsSeq) {
+  int len = jsSeq["length"].as<int>();
+  std::vector<int> seq;
+  for (int i = 0; i < len; i++) {
+    seq.push_back(jsSeq[i].as<int>());
+  }
+  Mountain m = buildMountain(seq);
+  val jsLayers = val::array();
+  for (auto &layer : m) {
+    val jsLayer = val::array();
+    for (auto &p : layer) {
+      val jsNode = val::object();
+      jsNode.set("value", p.first);
+      jsNode.set("parent", p.second);
+      jsLayer.call<void>("push", jsNode);
+    }
+    jsLayers.call<void>("push", jsLayer);
+  }
+  return jsLayers;
+}
+
+// ── 1-Y / ω-Y JS wrappers (forward declarations) ──
+val expand1YJS(const val &jsSeq, int fs);
+val expandWYJS(const val &jsSeq, int fs);
+val buildWYMountainJS(const val &jsSeq, int n, bool consistent);
+val build1YMountainJS(const val &jsSeq);
+// DBMS
+val oneYToDBMSJS(const val &jsSeq);
+std::string dbmsToStringJS(const val &jsDBMS);
+val dbmsToBMSJS(const val &jsDBMS);
+
 EMSCRIPTEN_BINDINGS(bms_core) {
   function("bmsAnalyze", &bmsAnalyze);
   function("matrixLexOrder", &matrixLexOrderJS);
   function("decomposePower", &decomposePowerToJS);
   function("computeT", &computeTToJS);
   function("zeroYToBMS", &zeroYToBMSJS);
+  function("zeroYExpand", &zeroYExpandJS);
   function("parseAndEvalBOCF", &parseAndEvalBOCF);
   function("expandBMS", &expandBMSJS);
   function("bmsTo0YSequence", &bmsTo0YSequenceJS);
   function("subscriptDepth", &subscriptDepthJS);
   function("termToVeblen", &termToVeblenJS);
   function("bocfToBMS", &bocfToBMSJS);
+  function("fundamentalSequence", &fundamentalSequenceJS);
+  function("cofinality", &cofinalityJS);
+  function("triangularToBMS", &triangularToBMSJS);
+  function("bmsToTriangular", &bmsToTriangularJS);
+  function("buildMountain", &buildMountainJS);
+  function("buildWYMountain", &buildWYMountainJS);
+  function("build1YMountain", &build1YMountainJS);
+  function("expand1Y", &expand1YJS);
+  function("expandWY", &expandWYJS);
+  function("oneYToDBMS", &oneYToDBMSJS);
+  function("dbmsToString", &dbmsToStringJS);
+  function("dbmsToBMS", &dbmsToBMSJS);
+}
+
+// ── 1-Y / ω-Y JS wrappers ──
+
+static std::vector<int> seqFromVal(const val &jsSeq) {
+  int len = jsSeq["length"].as<int>();
+  std::vector<int> seq;
+  for (int i = 0; i < len; i++)
+    seq.push_back(jsSeq[i].as<int>());
+  return seq;
+}
+
+static val seqToVal(const std::vector<int> &seq) {
+  val js = val::array();
+  for (int v : seq)
+    js.call<void>("push", v);
+  return js;
+}
+
+val expand1YJS(const val &jsSeq, int fs) {
+  auto seq = seqFromVal(jsSeq);
+  if (seq.empty() || seq[0] == 0)
+    return seqToVal(seq);
+  for (int v : seq)
+    if (v < 0)
+      return seqToVal(seq);
+  auto result = expand1Y(seq, fs);
+  return seqToVal(result);
+}
+
+val expandWYJS(const val &jsSeq, int fs) {
+  auto seq = seqFromVal(jsSeq);
+  if (seq.empty() || seq[0] == 0)
+    return seqToVal(seq);
+  for (int v : seq)
+    if (v < 0)
+      return seqToVal(seq);
+  auto result = expandWY(seq, fs);
+  return seqToVal(result);
+}
+
+static val emptyMountainResult() {
+  val r = val::object();
+  r.set("layers", val::array());
+  r.set("rows", val::array());
+  return r;
+}
+
+val buildWYMountainJS(const val &jsSeq, int n, bool consistent = false) {
+  int len = jsSeq["length"].as<int>();
+  std::vector<int> seq;
+  for (int i = 0; i < len; i++)
+    seq.push_back(jsSeq[i].as<int>());
+  if (seq.empty() || seq[0] == 0)
+    return emptyMountainResult();
+  for (int v : seq)
+    if (v < 0)
+      return emptyMountainResult();
+  auto [m, rowLabels] = buildWYMountainWithRows(seq, n, consistent);
+
+  val jsLayers = val::array();
+  for (auto &layer : m) {
+    val jsLayer = val::array();
+    for (int c = 0; c < (int)layer.size(); c++) {
+      val jsNode = val::object();
+      jsNode.set("value", layer[c].first);
+      jsNode.set("parent", layer[c].second);
+      // parent column: col - parent (parent is distance)
+      jsNode.set("parentCol", layer[c].second > 0 ? c - layer[c].second : -1);
+      jsLayer.call<void>("push", jsNode);
+    }
+    jsLayers.call<void>("push", jsLayer);
+  }
+
+  val jsRows = val::array();
+  for (auto &ord : rowLabels) {
+    val jsOrd = val::array();
+    // Pass raw little-endian: [a0, a1, a2] = a0·ω^0 + a1·ω^1 + a2·ω^2
+    for (int v : ord) {
+      jsOrd.call<void>("push", v);
+    }
+    jsRows.call<void>("push", jsOrd);
+  }
+
+  val result = val::object();
+  result.set("layers", jsLayers);
+  result.set("rows", jsRows);
+  return result;
+}
+
+val build1YMountainJS(const val &jsSeq) {
+  int len = jsSeq["length"].as<int>();
+  std::vector<int> seq;
+  for (int i = 0; i < len; i++)
+    seq.push_back(jsSeq[i].as<int>());
+  if (seq.empty() || seq[0] == 0)
+    return emptyMountainResult();
+  for (int v : seq)
+    if (v < 0)
+      return emptyMountainResult();
+  auto [m, rowLabels] = build1YMountainWithRows(seq);
+
+  val jsLayers = val::array();
+  for (auto &layer : m) {
+    val jsLayer = val::array();
+    for (int c = 0; c < (int)layer.size(); c++) {
+      val jsNode = val::object();
+      jsNode.set("value", layer[c].first);
+      jsNode.set("parent", layer[c].second);
+      jsNode.set("parentCol", layer[c].second > 0 ? c - layer[c].second : -1);
+      jsLayer.call<void>("push", jsNode);
+    }
+    jsLayers.call<void>("push", jsLayer);
+  }
+
+  val jsRows = val::array();
+  for (auto &ord : rowLabels) {
+    val jsOrd = val::array();
+    for (int v : ord)
+      jsOrd.call<void>("push", v);
+    jsRows.call<void>("push", jsOrd);
+  }
+
+  val result = val::object();
+  result.set("layers", jsLayers);
+  result.set("rows", jsRows);
+  return result;
+}
+
+// ── DBMS conversion JS wrappers ──
+
+val oneYToDBMSJS(const val &jsSeq) {
+  auto seq = seqFromVal(jsSeq);
+  if (seq.empty() || seq[0] == 0)
+    return val::array();
+  for (int v : seq)
+    if (v < 0)
+      return val::array();
+  Matrix result = oneYToDBMS(seq);
+  val jsResult = val::array();
+  for (auto &col : result) {
+    val jsCol = val::array();
+    for (int v : col)
+      jsCol.call<void>("push", v);
+    jsResult.call<void>("push", jsCol);
+  }
+  return jsResult;
+}
+
+std::string dbmsToStringJS(const val &jsDBMS) {
+  Matrix M;
+  int cols = jsDBMS["length"].as<int>();
+  for (int i = 0; i < cols; i++) {
+    val jsCol = jsDBMS[i];
+    int rowLen = jsCol["length"].as<int>();
+    MatrixRow col;
+    for (int j = 0; j < rowLen; j++)
+      col.push_back(jsCol[j].as<int>());
+    M.push_back(std::move(col));
+  }
+  return dbmsToString(M);
+}
+
+val dbmsToBMSJS(const val &jsDBMS) {
+  Matrix M;
+  int cols = jsDBMS["length"].as<int>();
+  for (int i = 0; i < cols; i++) {
+    val jsCol = jsDBMS[i];
+    int rowLen = jsCol["length"].as<int>();
+    MatrixRow col;
+    for (int j = 0; j < rowLen; j++)
+      col.push_back(jsCol[j].as<int>());
+    M.push_back(std::move(col));
+  }
+  Matrix result = dbmsToBMS(M);
+  val jsResult = val::array();
+  for (auto &col : result) {
+    val jsCol = val::array();
+    for (int v : col)
+      jsCol.call<void>("push", v);
+    jsResult.call<void>("push", jsCol);
+  }
+  return jsResult;
 }

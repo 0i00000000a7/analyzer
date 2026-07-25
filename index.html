@@ -6,10 +6,15 @@
     <title>BMS analyzer</title>
   </head>
   <body>
-    <h1>BMS analyzer</h1>
+    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 4px">
+      <h1 style="margin: 0">BMS analyzer</h1>
+      <span style="font-size: 11pt; color: #888; align-self: flex-end; margin-bottom: 2px">v1.1.0</span>
+    </div>
     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
       <button id="input-mode-bms" class="mode-btn active">BMS</button>
       <button id="input-mode-0y" class="mode-btn">0-Y</button>
+      <button id="input-mode-1y" class="mode-btn">1-Y</button>
+      <button id="input-mode-wy" class="mode-btn">ω-Y</button>
       <button id="input-mode-bocf" class="mode-btn">BOCF</button>
       <input style="flex: 1" id="input" />
     </div>
@@ -34,6 +39,14 @@
         <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">0-Y</span>
         <span id="output-0y" style="font-size: 14pt"></span>
       </div>
+      <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 6px">
+        <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">DBMS</span>
+        <span id="output-dbms" style="font-size: 11pt; font-family: monospace; color: #444; word-break: break-all"></span>
+      </div>
+      <div id="triangular-row" style="display: none; align-items: baseline; gap: 8px; margin-top: 6px">
+        <span style="font-size: 12pt; color: #aaa; width: 68px; text-align: right">Tri BMS</span>
+        <span id="output-triangular" style="font-size: 11pt; font-family: monospace; color: #444; word-break: break-all"></span>
+      </div>
       <pre id="output-ast" style="display: none; font-size: 11pt; line-height: 1.4; margin: 8px 0 0 0"></pre>
       <div id="bms-output-row" style="display: none; align-items: center; gap: 8px; margin-top: 6px">
         <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">BMS</span>
@@ -56,13 +69,23 @@
       </div>
       <div
         id="expand-row"
-        style="display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 8px; border-top: 1px solid #ccc"
+        style="display: flex; flex-direction: column; gap: 4px; margin-top: 12px; padding-top: 8px; border-top: 1px solid #ccc"
       >
-        <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">Expand</span>
-        <button id="expand-btn" style="font-size: 11pt">Expand</button>
-        <span style="font-size: 10pt; color: #888">fs:</span>
-        <input id="expand-fs" type="number" value="3" min="1" max="20" style="width: 50px; font-size: 11pt" />
-        <span id="output-expand" style="font-size: 11pt; font-family: monospace; color: #444; word-break: break-all"></span>
+        <div style="display: flex; align-items: center; gap: 8px">
+          <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">Expand</span>
+          <button id="expand-btn" style="font-size: 11pt">Expand</button>
+          <span style="font-size: 10pt; color: #888">fs:</span>
+          <input id="expand-fs" type="number" value="3" min="1" max="20" style="width: 50px; font-size: 11pt" />
+        </div>
+        <div id="output-expand" style="font-size: 14pt; margin-left: 63px; word-break: break-all"></div>
+      </div>
+      <div id="mountain-row" style="display: none; margin-top: 12px; padding-top: 8px; border-top: 1px solid #ccc">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
+          <span style="font-size: 12pt; color: #aaa; width: 68px; text-align: right">Mountain</span>
+        </div>
+        <div id="mountain-svg-container" style="overflow-x: auto; overflow-y: visible; padding: 8px 0">
+          <svg id="mountain-svg" width="100%" height="200" style="display: block; min-width: 100px"></svg>
+        </div>
       </div>
     </div>
     <script type="module" src="./src/main.ts"></script>

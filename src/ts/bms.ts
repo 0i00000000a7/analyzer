@@ -2,9 +2,10 @@
  * BMS Analyzer - TypeScript wrapper around C++/WASM core
  */
 
-import type { Matrix, AnalysisResult } from './types.js';
+import type { Matrix, AnalysisResult, Mountain } from './types.js';
 import BmsWorker from './bms-worker.ts?worker';
 
+export { ensureLoaded, wasmModule };
 let wasmModule: any = null;
 let loadPromise: Promise<void> | null = null;
 
@@ -147,6 +148,16 @@ export async function termToVeblen(term: any[]): Promise<{
   return wasmModule.termToVeblen(term);
 }
 
+export async function fundamentalSequence(term: any[], n: number): Promise<{ term: string; termJS: any[] }> {
+  await ensureLoaded();
+  return wasmModule.fundamentalSequence(term, n);
+}
+
+export async function cofinality(term: any[]): Promise<{ term: string; termJS: any[] }> {
+  await ensureLoaded();
+  return wasmModule.cofinality(term);
+}
+
 /** Convert a BOCF expression string to BMS matrix representation via WASM (runs in Worker) */
 export async function bocfToBMS(input: string, onProgress?: (s: string) => void): Promise<string> {
   const worker = await getBocfWorker();
@@ -175,18 +186,6 @@ export async function bocfToBMS(input: string, onProgress?: (s: string) => void)
   });
 }
 
-/** Parse a 0-Y sequence string (comma-separated integers) into a number array */
-export function parse0Y(input: string): number[] {
-  return input.split(',').map((x) => parseInt(x.trim()));
-}
-
-/** Convert a 0-Y sequence (number array) to a BMS matrix via WASM */
-export async function zeroYToBMS(seq: number[]): Promise<Matrix> {
-  await ensureLoaded();
-  return wasmModule.zeroYToBMS(seq);
-}
-
-/** Format a BMS matrix as a display string like (0,0,0)(1,1,1)(2,2,0)(3,1,1) */
 export function matrixToDisplayStr(matrix: Matrix): string {
   return matrix.map((col) => '(' + col.join(',') + ')').join('');
 }

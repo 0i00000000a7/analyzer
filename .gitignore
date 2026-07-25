@@ -30,3 +30,6 @@ arXiv-2310.12832v2/
 
 # TypeScript
 *.tsbuildinfo
+
+# Python
+__pycache__/

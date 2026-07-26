@@ -18,6 +18,7 @@
     "test": "node src/ts/run-tests.js"
   },
   "devDependencies": {
+    "@types/node": "^26.1.1",
     "typescript": "6.0.3",
     "vite": "8.1.4"
   },

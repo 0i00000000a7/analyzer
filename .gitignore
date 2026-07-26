@@ -33,3 +33,7 @@ arXiv-2310.12832v2/
 
 # Python
 __pycache__/
+
+# CLI binaries
+analyzer-cli
+analyzer-cli-*

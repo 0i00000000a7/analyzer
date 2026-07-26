@@ -23,6 +23,7 @@ const output = document.getElementById('output') as HTMLDivElement;
 const outputVeblen = document.getElementById('output-veblen') as HTMLDivElement;
 const output0y = document.getElementById('output-0y') as HTMLSpanElement;
 const outputDbms = document.getElementById('output-dbms') as HTMLSpanElement;
+const dbmsRow = document.getElementById('dbms-row') as HTMLDivElement;
 const outputTriangular = document.getElementById('output-triangular') as HTMLSpanElement;
 const triangularRow = document.getElementById('triangular-row') as HTMLDivElement;
 const mountainRow = document.getElementById('mountain-row') as HTMLDivElement;
@@ -112,6 +113,7 @@ function setActiveInputMode(mode: InputMode) {
   outputAst.style.display = 'none';
   triangularRow.style.display = 'none';
   mountainRow.style.display = 'none';
+  dbmsRow.style.display = 'none';
   // Reset sequence stores
   current0YSeq = null;
   current1YSeq = null;
@@ -228,15 +230,28 @@ function renderOutput() {
   }
 }
 
+function transformInput(raw: string, mode: InputMode): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return raw;
+  if (trimmed.includes('(') || trimmed.includes(',')) return raw;
+  if (!/^[0-9\s]+$/.test(trimmed)) return raw;
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return raw;
+  if (mode === 'bms')
+    return tokens.map((t) => '(' + t.split('').join(',') + ')').join('');
+  return tokens.join(',');
+}
+
 input.value = '(0,0,0)(1,1,1)(2,1,0)(1,1,1)';
 
 async function update() {
   try {
+    const rawInput = transformInput(input.value, currentInputMode);
     const raw = parseInt(expandFs.value);
     const fs = isNaN(raw) ? 3 : raw;
 
     if (currentInputMode === 'bocf') {
-      const r = await parseAndEvalBOCF(input.value);
+      const r = await parseAndEvalBOCF(rawInput);
       if (r.error) {
         output.textContent = '(error)';
         outputVeblen.textContent = '';
@@ -273,40 +288,45 @@ async function update() {
     let matrix: Matrix;
 
     if (currentInputMode === '0y') {
-      const seq = parse0Y(input.value);
-      if (seq.length === 0 || seq.some(isNaN) || input.value.trim() === '') {
+      if (rawInput === '') {
         current0YSeq = null;
-        output.textContent = '';
-        outputVeblen.textContent = '';
+        matrix = [];
         output0y.textContent = '';
+        outputBms.setAttribute('data-raw', '');
         outputBms.textContent = '';
         triangularRow.style.display = 'none';
         mountainRow.style.display = 'none';
-        return;
-      }
-      current0YSeq = seq;
-      matrix = await zeroYToBMS(seq);
-      const flat = matrixToDisplayStr(matrix);
-      outputBms.setAttribute('data-raw', flat);
-      renderBms(flat);
-      output0y.textContent = '';
-      // Compute and draw mountain diagram
-      try {
-        const mountain = await buildMountain(seq);
-        drawMountain(mountain);
-      } catch {
-        mountainRow.style.display = 'none';
+        // Continue to analysis with empty matrix
+      } else {
+        const seq = parse0Y(rawInput);
+        if (seq.length === 0 || seq.some(isNaN)) {
+          current0YSeq = null;
+          output.textContent = '';
+          outputVeblen.textContent = '';
+          output0y.textContent = '';
+          outputBms.textContent = '';
+          triangularRow.style.display = 'none';
+          mountainRow.style.display = 'none';
+          return;
+        }
+        current0YSeq = seq;
+        matrix = await zeroYToBMS(seq);
+        const flat = matrixToDisplayStr(matrix);
+        outputBms.setAttribute('data-raw', flat);
+        renderBms(flat);
+        output0y.textContent = '';
+        try {
+          const mountain = await buildMountain(seq);
+          drawMountain(mountain);
+        } catch {
+          mountainRow.style.display = 'none';
+        }
       }
     } else if (currentInputMode === '1y') {
-      const seq = parse0Y(input.value);
-      if (seq.length === 0 || seq.some(isNaN) || input.value.trim() === '') {
-        current1YSeq = null;
-        outputExpand.textContent = '';
-        return;
-      }
+      let seq = parse0Y(rawInput);
+      if (seq.some(isNaN) || rawInput === '')
+        seq = [0];
       current1YSeq = seq;
-      // Show initial sequence
-      outputExpand.textContent = seq.join(',');
       output.textContent = '';
       outputVeblen.textContent = '';
       output0y.textContent = '';
@@ -330,6 +350,7 @@ async function update() {
         outputDbms.innerHTML = katex.renderToString(displayStr, {
           throwOnError: false,
         });
+        dbmsRow.style.display = 'flex';
         if (dbms.length > 0 && !hasOmega) {
           const bms = await dbmsToBMS(dbms);
           if (bms.length > 0) {
@@ -350,11 +371,19 @@ async function update() {
             }
           } else {
             bmsOutputRow.style.display = 'none';
+            output.innerHTML = katex.renderToString('0', { throwOnError: false });
+            outputVeblen.innerHTML = katex.renderToString('0', { throwOnError: false });
+            output0y.textContent = '';
           }
-        } else {
+        } else if (hasOmega) {
           bmsOutputRow.style.display = 'none';
           output.textContent = '';
           outputVeblen.textContent = '';
+          output0y.textContent = '';
+        } else {
+          bmsOutputRow.style.display = 'none';
+          output.innerHTML = katex.renderToString('0', { throwOnError: false });
+          outputVeblen.innerHTML = katex.renderToString('0', { throwOnError: false });
           output0y.textContent = '';
         }
       } catch {
@@ -363,14 +392,10 @@ async function update() {
       }
       return;
     } else if (currentInputMode === 'wy') {
-      const seq = parse0Y(input.value);
-      if (seq.length === 0 || seq.some(isNaN) || input.value.trim() === '') {
-        currentWYSeq = null;
-        outputExpand.textContent = '';
-        return;
-      }
+      let seq = parse0Y(rawInput);
+      if (seq.some(isNaN) || rawInput === '')
+        seq = [0];
       currentWYSeq = seq;
-      outputExpand.textContent = seq.join(',');
       output.textContent = '';
       outputVeblen.textContent = '';
       output0y.textContent = '';
@@ -394,6 +419,7 @@ async function update() {
         outputDbms.innerHTML = katex.renderToString(displayStr, {
           throwOnError: false,
         });
+        dbmsRow.style.display = 'flex';
         if (dbms.length > 0 && !hasOmega) {
           const bms = await dbmsToBMS(dbms);
           if (bms.length > 0) {
@@ -414,11 +440,19 @@ async function update() {
             }
           } else {
             bmsOutputRow.style.display = 'none';
+            output.innerHTML = katex.renderToString('0', { throwOnError: false });
+            outputVeblen.innerHTML = katex.renderToString('0', { throwOnError: false });
+            output0y.textContent = '';
           }
-        } else {
+        } else if (hasOmega) {
           bmsOutputRow.style.display = 'none';
           output.textContent = '';
           outputVeblen.textContent = '';
+          output0y.textContent = '';
+        } else {
+          bmsOutputRow.style.display = 'none';
+          output.innerHTML = katex.renderToString('0', { throwOnError: false });
+          outputVeblen.innerHTML = katex.renderToString('0', { throwOnError: false });
           output0y.textContent = '';
         }
       } catch {
@@ -427,7 +461,7 @@ async function update() {
       }
       return;
     } else {
-      matrix = parseMatrix(input.value);
+      matrix = parseMatrix(rawInput);
       mountainRow.style.display = 'none';
     }
 
@@ -880,7 +914,8 @@ expandBtn.addEventListener('click', async () => {
       const expanded = await zeroYExpand(current0YSeq, fs);
       outputExpand.textContent = expanded.join(',');
     } else {
-      const matrix = parseMatrix(input.value);
+      const raw = transformInput(input.value, currentInputMode);
+      const matrix = parseMatrix(raw);
       const expanded = await expandBMS(matrix, fs);
       outputExpand.textContent = matrixToDisplayStr(expanded);
     }

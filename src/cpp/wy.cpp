@@ -115,14 +115,12 @@ static void connectV(Node *n1, Node *n2) {
   n2->up = n1;
 }
 
-static void magmaOp(Node *node, int mag) {
-  bool isStrong = (mag == 4 || (mag == 3 && (node->y[0] > 0 || ordCmp(node->y, {0}) == 0))) && node->y[0] != -1;
-  Node *source = isStrong ? node->down : node;
-  for (auto *nd : source->right) {
-    Node *target = isStrong ? nd : nd->down;
+static void magmaOp(Node *node) {
+  for (auto *nd : node->right) {
+    Node *target = nd;
     if (target && ordCmp(target->y, node->y) == 0) {
       target->isMagma = true;
-      magmaOp(target, mag);
+      magmaOp(target);
     }
   }
 }
@@ -236,7 +234,7 @@ static std::vector<Node *> drawMountain(const std::vector<Node *> &seq, int n = 
 // w-Y mountain expansion
 // ════════════════════════════════════════════════════════════════
 
-static std::vector<Node *> expandwYMountain(std::vector<Node *> &seq, int fs, int n = -1, int magma = 3,
+static std::vector<Node *> expandwYMountain(std::vector<Node *> &seq, int fs, int n = -1,
                                             bool consistent = false, int depth = 0) {
   if (depth > 100)
     return seq;
@@ -272,7 +270,7 @@ static std::vector<Node *> expandwYMountain(std::vector<Node *> &seq, int fs, in
     diagonal = copyMountain(idx);
     if (idx.back()->value > 1 && !diagonal.empty()) {
       iterate = true;
-      diagonal2 = expandwYMountain(diagonal, fs, n, magma, consistent, depth + 1);
+      diagonal2 = expandwYMountain(diagonal, fs, n, consistent, depth + 1);
     }
   }
 
@@ -299,7 +297,7 @@ static std::vector<Node *> expandwYMountain(std::vector<Node *> &seq, int fs, in
   std::vector<Node *> rc;
   nd = mt2[root->x]->down;
   while (nd && ordCmp(root->y, nd->y) >= 0) {
-    magmaOp(nd, magma);
+    magmaOp(nd);
     rc.push_back(nd);
     if (!nd->up)
       break;
@@ -357,7 +355,7 @@ static std::vector<Node *> expandwYMountain(std::vector<Node *> &seq, int fs, in
             mt2[nd3->x + dis] = newRight;
 
           // magma edge
-          auto *magmaNode = (magma == 1 || n == 1) ? (nd3->up ? nd3->up->left : nd3->left) : nd3->left;
+          auto *magmaNode = (n == 1) ? (nd3->up ? nd3->up->left : nd3->left) : nd3->left;
           auto *newLeft2 = findNode(mt2[magmaNode->x + dis], nd3->y);
           while (newLeft2->up && ordCmp(newLeft2->y, thisRef->y) < 0) {
             int dyLen = (int)ordMinus(newLeft2->up->y, newLeft2->y).size();
@@ -410,9 +408,9 @@ static std::vector<Node *> expandwYMountain(std::vector<Node *> &seq, int fs, in
   return mt2;
 }
 
-static std::vector<int> expandwY(const std::vector<int> &seq, int fs, int n, int magma = 1, bool consistent = false) {
+static std::vector<int> expandwY(const std::vector<int> &seq, int fs, int n, bool consistent = false) {
   auto mt = generateMountain(seq);
-  auto result = expandwYMountain(mt, fs, n, magma, consistent, 0);
+  auto result = expandwYMountain(mt, fs, n, consistent);
   std::vector<int> values;
   for (auto *node : result)
     values.push_back(node->value);

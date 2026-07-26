@@ -38,9 +38,9 @@ Matrix zeroYToBMS(const std::vector<int> &seq) {
     cur = std::move(next);
   }
 
-  // Remove the last row (all-1s iteration)
+  // Remove the last row (all-1s iteration), keeping at least one row per column
   for (int i = 0; i < l; i++) {
-    if (!res[i].empty())
+    if (res[i].size() > 1)
       res[i].pop_back();
   }
 

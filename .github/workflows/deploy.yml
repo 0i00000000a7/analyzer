@@ -10,12 +10,11 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
 jobs:
   build-web:
+    concurrency:
+      group: pages
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -59,6 +58,7 @@ jobs:
         uses: actions/deploy-pages@v5
 
   build-cli:
+    if: startsWith(github.ref, 'refs/tags/')
     strategy:
       fail-fast: false
       matrix:
@@ -78,6 +78,5 @@ jobs:
 
       - name: Upload CLI to release
         uses: softprops/action-gh-release@v3
-        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: analyzer-cli-${{ matrix.target }}${{ matrix.target == 'windows-x86_64' && '.exe' || '' }}

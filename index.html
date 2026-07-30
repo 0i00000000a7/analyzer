@@ -4,90 +4,43 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BMS analyzer</title>
+    <script>
+      (function () {
+        var t = localStorage.getItem('theme');
+        if (t) document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
   </head>
   <body>
-    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 4px">
-      <h1 style="margin: 0">BMS analyzer</h1>
-      <span id="version" style="font-size: 11pt; color: #888; align-self: flex-end; margin-bottom: 2px"></span>
-    </div>
-    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
-      <button id="input-mode-bms" class="mode-btn active">BMS</button>
-      <button id="input-mode-0y" class="mode-btn">0-Y</button>
-      <button id="input-mode-1y" class="mode-btn">1-Y</button>
-      <button id="input-mode-wy" class="mode-btn">ω-Y</button>
-      <button id="input-mode-bocf" class="mode-btn">BOCF</button>
-      <input style="flex: 1" id="input" />
-    </div>
-    <hr />
-    <div style="display: inline-flex; flex-direction: column; align-items: flex-start; margin: 0 auto">
-      <div style="display: flex; align-items: baseline; gap: 8px">
-        <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">BOCF</span>
-        <span id="output" style="font-size: 16pt"></span>
+    <div id="app"></div>
+    <noscript>
+      <div style="max-width: 500px; margin: 60px auto; padding: 24px; font-family: system-ui, sans-serif; text-align: center">
+        <h2 class="error">JavaScript Required</h2>
+        <p>This application requires JavaScript to run. Please enable JavaScript in your browser settings and reload the page.</p>
       </div>
-      <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px">
-        <button id="mode-v" class="mode-btn active"></button>
-        <button id="mode-m" class="mode-btn"></button>
-        <label style="display: flex; align-items: center; gap: 4px; margin-left: 12px; font-size: 12pt; cursor: pointer">
-          <input type="checkbox" id="sugar-toggle" checked /> Sugar
-        </label>
-      </div>
-      <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 8px">
-        <span id="output-label" style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">Veblen</span>
-        <span id="output-veblen" style="font-size: 14pt"></span>
-      </div>
-      <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 8px">
-        <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">0-Y</span>
-        <span id="output-0y" style="font-size: 14pt"></span>
-      </div>
-      <div id="dbms-row" style="display: none; align-items: baseline; gap: 8px; margin-top: 6px">
-        <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">DBMS</span>
-        <span id="output-dbms" style="font-size: 11pt; font-family: monospace; color: #444; word-break: break-all"></span>
-      </div>
-      <div id="triangular-row" style="display: none; align-items: baseline; gap: 8px; margin-top: 6px">
-        <span style="font-size: 12pt; color: #aaa; width: 68px; text-align: right">Tri BMS</span>
-        <span id="output-triangular" style="font-size: 11pt; font-family: monospace; color: #444; word-break: break-all"></span>
-      </div>
-      <pre id="output-ast" style="display: none; font-size: 11pt; line-height: 1.4; margin: 8px 0 0 0"></pre>
-      <div id="bms-output-row" style="display: none; align-items: center; gap: 8px; margin-top: 6px">
-        <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">BMS</span>
-        <button id="bms-mode-matrix" class="mode-btn">Matrix</button>
-        <button id="bms-mode-flat" class="mode-btn active">Flat</button>
-        <button id="bocf-to-bms-btn" style="display: none; font-size: 10pt">Convert</button>
-        <span
-          id="bms-status"
-          style="
-            display: none;
-            font-size: 10pt;
-            color: #888;
-            max-width: 400px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-          "
-        ></span>
-        <span id="output-bms" style="font-size: 11pt; font-family: monospace; color: #444; word-break: break-all"></span>
-      </div>
-      <div
-        id="expand-row"
-        style="display: flex; flex-direction: column; gap: 4px; margin-top: 12px; padding-top: 8px; border-top: 1px solid #ccc"
-      >
-        <div style="display: flex; align-items: center; gap: 8px">
-          <span style="font-size: 12pt; color: #aaa; width: 55px; text-align: right">Expand</span>
-          <button id="expand-btn" style="font-size: 11pt">Expand</button>
-          <span style="font-size: 10pt; color: #888">fs:</span>
-          <input id="expand-fs" type="number" value="3" min="1" max="20" style="width: 50px; font-size: 11pt" />
-        </div>
-        <div id="output-expand" style="font-size: 14pt; margin-left: 63px; word-break: break-all"></div>
-      </div>
-      <div id="mountain-row" style="display: none; margin-top: 12px; padding-top: 8px; border-top: 1px solid #ccc">
-        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
-          <span style="font-size: 12pt; color: #aaa; width: 68px; text-align: right">Mountain</span>
-        </div>
-        <div id="mountain-svg-container" style="overflow-x: auto; overflow-y: visible; padding: 8px 0">
-          <svg id="mountain-svg" width="100%" height="200" style="display: block; min-width: 100px"></svg>
-        </div>
-      </div>
-    </div>
+    </noscript>
+    <script>
+      (function () {
+        var issues = [];
+        if (typeof WebAssembly === 'undefined' || typeof WebAssembly.instantiate !== 'function')
+          issues.push('WebAssembly');
+        try { new Function('async function f(){await 0}')(); } catch (e) { issues.push('async/await'); }
+        try { new Function('return import("data:text/javascript,")')(); } catch (e) { issues.push('dynamic import()'); }
+        if (typeof globalThis === 'undefined') issues.push('globalThis');
+        if (issues.length) {
+          document.addEventListener('DOMContentLoaded', function () {
+            var el = document.createElement('div');
+            el.style.cssText = 'max-width:500px;margin:60px auto;padding:24px;font-family:system-ui,sans-serif;border:2px solid var(--error,#c00);border-radius:8px';
+            el.innerHTML =
+              '<h2 class="error" style="margin-top:0">Browser Not Supported</h2>' +
+              '<p>Your browser is missing the following required features:</p>' +
+              '<ul>' + issues.map(function (i) { return '<li>' + i + '</li>'; }).join('') + '</ul>' +
+              '<p>Please use a modern browser such as <b>Chrome 89+</b>, <b>Firefox 89+</b>, <b>Safari 15+</b>, or <b>Edge 89+</b>.</p>';
+            document.body.insertBefore(el, document.body.firstChild);
+          });
+        }
+      })();
+    </script>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

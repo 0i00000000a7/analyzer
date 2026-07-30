@@ -186,6 +186,18 @@ export async function bocfToBMS(input: string, onProgress?: (s: string) => void)
   });
 }
 
+export function cancelBocfToBMS() {
+  if (bocfWorker) {
+    bocfWorker.terminate();
+    bocfWorker = null;
+    bocfWorkerReady = null;
+  }
+  for (const [, p] of bocfPending) {
+    p.reject(new Error('Cancelled'));
+  }
+  bocfPending.clear();
+}
+
 export function matrixToDisplayStr(matrix: Matrix): string {
   return matrix.map((col) => '(' + col.join(',') + ')').join('');
 }

@@ -117,7 +117,7 @@ static void connectV(Node *n1, Node *n2) {
 
 static void magmaOp(Node *node) {
   for (auto *nd : node->right) {
-    Node *target = nd;
+    Node *target = nd ? nd->down : nullptr;
     if (target && ordCmp(target->y, node->y) == 0) {
       target->isMagma = true;
       magmaOp(target);
@@ -355,7 +355,7 @@ static std::vector<Node *> expandwYMountain(std::vector<Node *> &seq, int fs, in
             mt2[nd3->x + dis] = newRight;
 
           // magma edge
-          auto *magmaNode = (n == 1) ? (nd3->up ? nd3->up->left : nd3->left) : nd3->left;
+          auto *magmaNode = nd3->up->left;
           auto *newLeft2 = findNode(mt2[magmaNode->x + dis], nd3->y);
           while (newLeft2->up && ordCmp(newLeft2->y, thisRef->y) < 0) {
             int dyLen = (int)ordMinus(newLeft2->up->y, newLeft2->y).size();

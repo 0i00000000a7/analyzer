@@ -9,9 +9,11 @@ const props = defineProps<{
   dbmsHtml: string;
   bmsHtml: string;
   triangularHtml: string;
+  upmsHtml: string;
   showDbmsRow: boolean;
   showBmsRow: boolean;
   showTriangularRow: boolean;
+  showUpmsRow: boolean;
   converting: boolean;
   convertStatus: string;
 }>();
@@ -40,6 +42,12 @@ const emit = defineEmits<{
     <div style="display: flex; align-items: baseline; gap: 8px; margin-top: 8px">
       <span class="label" style="font-size: 12pt; width: 55px; text-align: right">0-Y</span>
       <span style="font-size: 14pt" v-html="props.zeroYHtml"></span>
+    </div>
+
+    <!-- UPMS output -->
+    <div v-if="props.showUpmsRow" style="display: flex; align-items: baseline; gap: 8px; margin-top: 6px">
+      <span class="label" style="font-size: 12pt; width: 55px; text-align: right">UPMS</span>
+      <span class="mono" style="font-size: 11pt; font-family: monospace; word-break: break-all" v-html="props.upmsHtml"></span>
     </div>
 
     <!-- DBMS output -->

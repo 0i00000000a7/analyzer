@@ -16,11 +16,13 @@ import { parse0Y, zeroYToBMS, zeroYExpand, buildMountain } from '../ts/bms-zero-
 import { triangularToBMS, bmsToTriangular } from '../ts/bms-triangular.js';
 import { expand1Y, expandWY, buildWYMountain, build1YMountain } from '../ts/wy.js';
 import { oneYToDBMS, dbmsToString, dbmsToBMS } from '../ts/y_dbms.js';
+import { parseUPMS, formatUPMS, expandUPMS, upmsToBMS, upmsExprToMatrixMSMatrix } from '../ts/upms.js';
 import type { AnalysisResult, Matrix, Mountain } from '../ts/types.js';
 
-export type InputMode = 'bms' | '0y' | '1y' | 'wy' | 'bocf';
+export type InputMode = 'bms' | '0y' | '1y' | 'wy' | 'bocf' | 'upms';
 export type VeblenMode = 'v' | 'm';
-export type BmsDisplayMode = 'matrix' | 'flat';
+export type BmsDisplayMode = 'matrix' | 'flat' | 'compact';
+export type UpmsDisplayMode = 'matrix' | 'flat' | 'compact';
 export type BmsInputPreference = 'auto' | 'normal' | 'triangular';
 
 function transformInput(raw: string, mode: InputMode): string {
@@ -30,7 +32,7 @@ function transformInput(raw: string, mode: InputMode): string {
   if (!/^[0-9\s]+$/.test(trimmed)) return raw;
   const tokens = trimmed.split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return raw;
-  if (mode === 'bms') return tokens.map((t) => '(' + t.split('').join(',') + ')').join('');
+  if (mode === 'bms' || mode === 'upms') return tokens.map((t) => '(' + t.split('').join(',') + ')').join('');
   return tokens.join(',');
 }
 
@@ -70,6 +72,7 @@ export function useAnalysis(
   veblenMode: Ref<VeblenMode>,
   sugarEnabled: Ref<boolean>,
   bmsDisplayMode: Ref<BmsDisplayMode>,
+  upmsDisplayMode: Ref<UpmsDisplayMode>,
   bmsInputPref: Ref<BmsInputPreference>,
 ) {
   const ordinalHtml = ref('');
@@ -78,13 +81,16 @@ export function useAnalysis(
   const dbmsHtml = ref('');
   const bmsHtml = ref('');
   const triangularHtml = ref('');
+  const upmsHtml = ref('');
 
   const showDbmsRow = ref(false);
   const showBmsRow = ref(false);
   const showTriangularRow = ref(false);
+  const showUpmsRow = ref(false);
   const showMountainRow = ref(false);
 
   const bmsRaw = ref('');
+  const upmsRaw = ref('');
   const mountainType = ref<'0y' | '1y' | 'wy' | null>(null);
   const mountainData = ref<Mountain | null>(null);
   const mountainRowLabels = ref<number[][] | null>(null);
@@ -94,6 +100,7 @@ export function useAnalysis(
   let current0YSeq: number[] | null = null;
   let current1YSeq: number[] | null = null;
   let currentWYSeq: number[] | null = null;
+  let currentUPMSMatrix: number[][] | null = null;
 
   // BOCF conversion state
   const converting = ref(false);
@@ -115,6 +122,34 @@ export function useAnalysis(
       const matrix = parseMatrix(aligned);
       return katex.renderToString(matrixToLatex(matrix), { throwOnError: false });
     }
+    if (bmsDisplayMode.value === 'compact') {
+      const matrix = parseMatrix(aligned);
+      const compact = matrix.map(col => {
+        const values = [...col];
+        while (values.length > 1 && values[values.length - 1] === 0) values.pop();
+        return values.join('');
+      }).join(' ');
+      return katex.renderToString('\\text{' + compact + '}', { throwOnError: false });
+    }
+    return katex.renderToString('\\text{' + aligned + '}', { throwOnError: false });
+  }
+
+  function renderUpms(raw: string): string {
+    if (raw === '(empty)' || raw === '(error)') return raw;
+    const aligned = alignMatrixStr(raw);
+    if (upmsDisplayMode.value === 'matrix') {
+      const matrix = parseMatrix(aligned);
+      return katex.renderToString(matrixToLatex(matrix), { throwOnError: false });
+    }
+    if (upmsDisplayMode.value === 'compact') {
+      const matrix = parseMatrix(aligned);
+      const compact = matrix.map(col => {
+        const values = [...col];
+        while (values.length > 1 && values[values.length - 1] === 0) values.pop();
+        return values.join('');
+      }).join(' ');
+      return katex.renderToString('\\text{' + compact + '}', { throwOnError: false });
+    }
     return katex.renderToString('\\text{' + aligned + '}', { throwOnError: false });
   }
 
@@ -125,11 +160,14 @@ export function useAnalysis(
     dbmsHtml.value = '';
     bmsHtml.value = '';
     triangularHtml.value = '';
+    upmsHtml.value = '';
     showDbmsRow.value = false;
     showBmsRow.value = false;
     showTriangularRow.value = false;
+    showUpmsRow.value = false;
     showMountainRow.value = false;
     bmsRaw.value = '';
+    upmsRaw.value = '';
     mountainType.value = null;
     mountainData.value = null;
     mountainRowLabels.value = null;
@@ -138,6 +176,7 @@ export function useAnalysis(
     current0YSeq = null;
     current1YSeq = null;
     currentWYSeq = null;
+    currentUPMSMatrix = null;
   }
 
   async function update() {
@@ -164,9 +203,17 @@ export function useAnalysis(
         await handleWY(rawInput);
         return;
       }
+      if (inputMode.value === 'upms') {
+        await handleUPMS(rawInput);
+        return;
+      }
 
       // BMS mode
       matrix = parseMatrix(rawInput);
+      const bmsFlat = matrixToDisplayStr(matrix);
+      bmsRaw.value = bmsFlat;
+      bmsHtml.value = renderBms(bmsFlat);
+      showBmsRow.value = true;
       const pref = bmsInputPref.value;
       const isTri = matrix.length >= 3 && isTriangularMatrix(matrix);
 
@@ -357,6 +404,55 @@ export function useAnalysis(
     } catch {}
   }
 
+  async function handleUPMS(rawInput: string) {
+    if (!rawInput.trim()) return;
+    // Reuse BMS parser for UPMS - transformInput handles "0 11" -> "(0)(1,1)"
+    const transformed = transformInput(rawInput, 'bms');
+    const expr = parseMatrix(transformed);
+    if (expr.length === 0) return;
+    currentUPMSMatrix = expr;
+
+    // Use UPMS-specific formatting
+    const upmsFlat = matrixToDisplayStr(expr);
+    upmsRaw.value = upmsFlat;
+    upmsHtml.value = renderUpms(upmsFlat);
+    showUpmsRow.value = true;
+
+    try {
+      const bmsExpr = upmsToBMS(expr);
+      const matrix = upmsExprToMatrixMSMatrix(bmsExpr);
+      if (matrix.length > 0) {
+        const flat = matrixToDisplayStr(matrix);
+        bmsRaw.value = flat;
+        bmsHtml.value = renderBms(flat);
+        showBmsRow.value = true;
+
+        const r = await analyze(matrix);
+        lastResult = r;
+        ordinalHtml.value = katex.renderToString(r.ordinal, { throwOnError: false });
+
+        if (r.veblen && !r.gteEBO) {
+          const v = getVeblenOutput(r, veblenMode.value, sugarEnabled.value);
+          if (v) veblenHtml.value = katex.renderToString(v, { throwOnError: false });
+        }
+
+        const seq = await bmsTo0YSequence(matrix);
+        zeroYHtml.value = seq ? katex.renderToString(seq, { throwOnError: false }) : '';
+
+        const triMatrix = await bmsToTriangular(matrix);
+        if (triMatrix && triMatrix.length > 0) {
+          showTriangularRow.value = true;
+          const raw = matrixToDisplayStr(triMatrix);
+          const aligned = alignMatrixStr(raw);
+          triangularHtml.value = katex.renderToString('\\text{' + aligned + '}', { throwOnError: false });
+        }
+      }
+    } catch (e) {
+      console.error('UPMS conversion error:', e);
+      ordinalHtml.value = '(error: ' + (e as Error).message + ')';
+    }
+  }
+
   // BOCF conversion
   async function convertBocfToBms() {
     converting.value = true;
@@ -420,6 +516,10 @@ export function useAnalysis(
         if (!current0YSeq) { expandResult.value = '(no sequence)'; return; }
         const expanded = await zeroYExpand(current0YSeq, fs);
         expandResult.value = expanded.join(',');
+      } else if (inputMode.value === 'upms') {
+        if (!currentUPMSMatrix) { expandResult.value = '(no matrix)'; return; }
+        const expanded = expandUPMS(currentUPMSMatrix, fs);
+        expandResult.value = formatUPMS(expanded);
       } else {
         const rawInput = transformInput(inputValue.value, inputMode.value);
         const matrix = parseMatrix(rawInput);
@@ -436,9 +536,12 @@ export function useAnalysis(
     update();
   }, { immediate: true });
 
-  // Re-render BMS and Veblen when display mode changes
+  // Re-render BMS and UPMS when display mode changes
   watch(bmsDisplayMode, () => {
     if (bmsRaw.value) bmsHtml.value = renderBms(bmsRaw.value);
+  });
+  watch(upmsDisplayMode, () => {
+    if (upmsRaw.value) upmsHtml.value = renderUpms(upmsRaw.value);
   });
 
   watch([veblenMode, sugarEnabled], () => {
@@ -449,8 +552,8 @@ export function useAnalysis(
   });
 
   return {
-    ordinalHtml, veblenHtml, zeroYHtml, dbmsHtml, bmsHtml, triangularHtml,
-    showDbmsRow, showBmsRow, showTriangularRow, showMountainRow,
+    ordinalHtml, veblenHtml, zeroYHtml, dbmsHtml, bmsHtml, triangularHtml, upmsHtml,
+    showDbmsRow, showBmsRow, showTriangularRow, showUpmsRow, showMountainRow,
     bmsRaw, mountainType, mountainData, mountainRowLabels,
     converting, convertStatus, convertBocfToBms, cancelConvert,
     expandResult, expandFs, doExpand,

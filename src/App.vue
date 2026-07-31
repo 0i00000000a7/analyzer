@@ -8,7 +8,7 @@ import InputPanel from './components/InputPanel.vue';
 import OutputPanel from './components/OutputPanel.vue';
 import ExpandPanel from './components/ExpandPanel.vue';
 import MountainDiagram from './components/MountainDiagram.vue';
-import { useAnalysis, type InputMode, type VeblenMode, type BmsDisplayMode, type BmsInputPreference } from './composables/useAnalysis';
+import { useAnalysis, type InputMode, type VeblenMode, type BmsDisplayMode, type UpmsDisplayMode, type BmsInputPreference } from './composables/useAnalysis';
 
 declare const __APP_VERSION__: string;
 const version = __APP_VERSION__;
@@ -18,9 +18,10 @@ const inputValue = ref('(0,0,0)(1,1,1)(2,1,0)(1,1,1)');
 const veblenMode = ref<VeblenMode>('v');
 const sugarEnabled = ref(true);
 const bmsDisplayMode = ref<BmsDisplayMode>('flat');
+const upmsDisplayMode = ref<UpmsDisplayMode>('flat');
 const bmsInputPref = ref<BmsInputPreference>('auto');
 
-const analysis = useAnalysis(inputMode, inputValue, veblenMode, sugarEnabled, bmsDisplayMode, bmsInputPref);
+const analysis = useAnalysis(inputMode, inputValue, veblenMode, sugarEnabled, bmsDisplayMode, upmsDisplayMode, bmsInputPref);
 </script>
 
 <template>
@@ -28,7 +29,7 @@ const analysis = useAnalysis(inputMode, inputValue, veblenMode, sugarEnabled, bm
   <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 4px">
     <h1 style="margin: 0">BMS analyzer</h1>
     <span class="muted" style="font-size: 11pt; align-self: flex-end; margin-bottom: 2px">v{{ version }}</span>
-    <SettingsPanel v-model:veblenMode="veblenMode" v-model:sugarEnabled="sugarEnabled" v-model:bmsDisplayMode="bmsDisplayMode" v-model:bmsInputPref="bmsInputPref" />
+    <SettingsPanel v-model:veblenMode="veblenMode" v-model:sugarEnabled="sugarEnabled" v-model:bmsDisplayMode="bmsDisplayMode" v-model:upmsDisplayMode="upmsDisplayMode" v-model:bmsInputPref="bmsInputPref" />
   </div>
   <InputPanel v-model:mode="inputMode" v-model:value="inputValue" />
   <hr />
@@ -40,9 +41,11 @@ const analysis = useAnalysis(inputMode, inputValue, veblenMode, sugarEnabled, bm
     :dbmsHtml="analysis.dbmsHtml.value"
     :bmsHtml="analysis.bmsHtml.value"
     :triangularHtml="analysis.triangularHtml.value"
+    :upmsHtml="analysis.upmsHtml.value"
     :showDbmsRow="analysis.showDbmsRow.value"
     :showBmsRow="analysis.showBmsRow.value"
     :showTriangularRow="analysis.showTriangularRow.value"
+    :showUpmsRow="analysis.showUpmsRow.value"
     :converting="analysis.converting.value"
     :convertStatus="analysis.convertStatus.value"
     @convert="analysis.convertBocfToBms"

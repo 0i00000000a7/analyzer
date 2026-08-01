@@ -29,16 +29,16 @@ jobs:
           node-version: 26
           cache: pnpm
 
-      - name: Setup emscripten
-        uses: emscripten-core/setup-emsdk@v16
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          version: 3.1.73
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli --version 0.2.126
 
       - name: Install dependencies
         run: pnpm install
-
-      - name: Create wasm directory
-        run: mkdir -p src/wasm
 
       - name: Build WASM + Vite
         run: pnpm build
@@ -65,19 +65,28 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: linux-x86_64
+            artifact: analyzer-cli-linux-x86_64
+            bin: analyzer-cli
           - os: ubuntu-24.04-arm
-            target: linux-aarch64
+            artifact: analyzer-cli-linux-aarch64
+            bin: analyzer-cli
           - os: windows-latest
-            target: windows-x86_64
+            artifact: analyzer-cli-windows-x86_64.exe
+            bin: analyzer-cli.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Build CLI (${{ matrix.target }})
-        run: bash scripts/build-cli.sh ${{ matrix.target }}
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build CLI (${{ matrix.artifact }})
+        run: cargo build --release -p analyzer-cli --manifest-path src/rust/Cargo.toml
+
+      - name: Prepare artifact
+        run: cp src/rust/target/release/${{ matrix.bin }} ${{ matrix.artifact }}
 
       - name: Upload CLI to release
         uses: softprops/action-gh-release@v3
         with:
-          files: analyzer-cli-${{ matrix.target }}${{ matrix.target == 'windows-x86_64' && '.exe' || '' }}
+          files: ${{ matrix.artifact }}

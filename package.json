@@ -2,24 +2,19 @@
   "name": "bms-analyzer",
   "version": "2.0.0",
   "private": true,
-  "description": "BMS to ordinal analyzer — C++/WASM core with Vite + TypeScript",
+  "description": "BMS to ordinal analyzer — Rust/WASM core with Vite + TypeScript",
   "type": "module",
   "scripts": {
-    "build:wasm": "em++ -std=c++20 -O3 -flto -fomit-frame-pointer -fno-exceptions -I src/cpp -lembind -o src/wasm/bms-core.js -sEXPORT_ES6 -sMODULARIZE -sEXPORT_NAME=BmsModule -sFILESYSTEM=0 -sSTACK_SIZE=512KB -sSINGLE_FILE -sENVIRONMENT=web -sDISABLE_EXCEPTION_CATCHING=1 src/cpp/bindings.cpp src/cpp/ordinal.cpp src/cpp/bms_analysis.cpp src/cpp/zero_y.cpp src/cpp/bms_expand.cpp src/cpp/triangular.cpp src/cpp/wy.cpp src/cpp/1y.cpp src/cpp/y_dbms.cpp src/cpp/parser.cpp",
-    "build:cli": "bash scripts/build-cli.sh native",
-    "build:cli:linux-x86_64": "bash scripts/build-cli.sh linux-x86_64",
-    "build:cli:linux-aarch64": "bash scripts/build-cli.sh linux-aarch64",
-    "build:cli:macos-x86_64": "bash scripts/build-cli.sh macos-x86_64",
-    "build:cli:macos-arm64": "bash scripts/build-cli.sh macos-arm64",
-    "build:cli:windows-x86_64": "bash scripts/build-cli.sh windows-x86_64",
+    "build:wasm": "cd src/rust && cargo build -p bms-wasm --target wasm32-unknown-unknown --release && WB=\"$(command -v wasm-bindgen || echo /root/.cargo/bin/wasm-bindgen)\" && \"$WB\" target/wasm32-unknown-unknown/release/bms_wasm.wasm --out-dir ../wasm/pkg --target web --no-typescript",
+    "build:cli": "cargo build --release -p analyzer-cli --manifest-path src/rust/Cargo.toml && cp src/rust/target/release/analyzer-cli .",
     "dev": "vite",
     "build": "pnpm build:wasm && vite build",
-    "preview": "vite preview",
-    "test": "node src/ts/run-tests.js"
+    "preview": "vite preview"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
     "@vitejs/plugin-vue": "^6.0.8",
+    "playwright": "^1.62.1",
     "typescript": "6.0.3",
     "vite": "8.1.5"
   },

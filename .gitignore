@@ -37,3 +37,6 @@ __pycache__/
 # CLI binaries
 analyzer-cli
 analyzer-cli-*
+
+# Rust
+src/rust/target/

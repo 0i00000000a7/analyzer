@@ -7,6 +7,9 @@ import {
   matrixToLatex,
   parseAndEvalBOCF,
   expandBMS,
+  expandUPMS,
+  isLegalUPMSMatrix,
+  upmsToBMS,
   bocfToBMS,
   cancelBocfToBMS,
   termToVeblen,
@@ -16,7 +19,6 @@ import { parse0Y, zeroYToBMS, zeroYExpand, buildMountain } from '../ts/bms-zero-
 import { triangularToBMS, bmsToTriangular } from '../ts/bms-triangular.js';
 import { expand1Y, expandWY, buildWYMountain, build1YMountain } from '../ts/wy.js';
 import { oneYToDBMS, dbmsToString, dbmsToBMS } from '../ts/y_dbms.js';
-import { parseUPMS, formatUPMS, expandUPMS, upmsToBMS, upmsExprToMatrixMSMatrix } from '../ts/upms.js';
 import type { AnalysisResult, Matrix, Mountain } from '../ts/types.js';
 
 export type InputMode = 'bms' | '0y' | '1y' | 'wy' | 'bocf' | 'upms';
@@ -419,8 +421,8 @@ export function useAnalysis(
     showUpmsRow.value = true;
 
     try {
-      const bmsExpr = upmsToBMS(expr);
-      const matrix = upmsExprToMatrixMSMatrix(bmsExpr);
+      const bmsExpr = await upmsToBMS(expr);
+      const matrix = bmsExpr;
       if (matrix.length > 0) {
         const flat = matrixToDisplayStr(matrix);
         bmsRaw.value = flat;
@@ -518,13 +520,13 @@ export function useAnalysis(
         expandResult.value = expanded.join(',');
       } else if (inputMode.value === 'upms') {
         if (!currentUPMSMatrix) { expandResult.value = '(no matrix)'; return; }
-        const expanded = expandUPMS(currentUPMSMatrix, fs);
-        expandResult.value = formatUPMS(expanded);
+        const expanded = await expandUPMS(currentUPMSMatrix, fs);
+        expandResult.value = renderUpms(matrixToDisplayStr(expanded));
       } else {
         const rawInput = transformInput(inputValue.value, inputMode.value);
         const matrix = parseMatrix(rawInput);
         const expanded = await expandBMS(matrix, fs);
-        expandResult.value = matrixToDisplayStr(expanded);
+        expandResult.value = renderBms(matrixToDisplayStr(expanded));
       }
     } catch {
       expandResult.value = '(error)';

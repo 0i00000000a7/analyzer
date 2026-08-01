@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["core", "cli", "wasm"]
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+strip = "symbols"
+codegen-units = 1

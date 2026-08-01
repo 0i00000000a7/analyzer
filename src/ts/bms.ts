@@ -1,8 +1,9 @@
 /**
- * BMS Analyzer - TypeScript wrapper around C++/WASM core
+ * BMS Analyzer - TypeScript wrapper around Rust/WASM core
  */
 
 import type { Matrix, AnalysisResult, Mountain } from './types.js';
+import initWasm, * as wasm from '../wasm/pkg/bms_wasm.js';
 import BmsWorker from './bms-worker.ts?worker';
 
 export { ensureLoaded, wasmModule };
@@ -13,15 +14,9 @@ async function ensureLoaded(): Promise<void> {
   if (wasmModule) return;
   if (loadPromise) return loadPromise;
 
-  loadPromise = (async () => {
-    const mod = await import('../wasm/bms-core.js');
-    const instance = await (mod.default as Function)({
-      locateFile: (path: string) => {
-        return new URL('../wasm/' + path, import.meta.url).href;
-      },
-    });
-    wasmModule = instance;
-  })();
+  loadPromise = initWasm().then(() => {
+    wasmModule = wasm;
+  });
 
   return loadPromise;
 }
@@ -31,10 +26,6 @@ let bocfWorker: Worker | null = null;
 let bocfWorkerReady: Promise<void> | null = null;
 let bocfReqId = 0;
 const bocfPending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
-
-// Compute absolute URLs for WASM files from the main-thread context
-const wasmModuleUrl = new URL('../wasm/bms-core.js', import.meta.url).href;
-const wasmBaseUrl = new URL('../wasm/', import.meta.url).href;
 
 function getBocfWorker(): Promise<Worker> {
   if (bocfWorker) return Promise.resolve(bocfWorker);
@@ -67,7 +58,7 @@ function getBocfWorker(): Promise<Worker> {
     worker.onerror = (e: ErrorEvent) => {
       reject(new Error('Worker error: ' + e.message));
     };
-    worker.postMessage({ type: 'init', id: 0, wasmModuleUrl, wasmBaseUrl });
+    worker.postMessage({ type: 'init', id: 0 });
   });
 
   return bocfWorkerReady.then(() => bocfWorker!);
@@ -135,6 +126,42 @@ export async function parseAndEvalBOCF(
 export async function expandBMS(matrix: Matrix, fs: number): Promise<Matrix> {
   await ensureLoaded();
   return wasmModule.expandBMS(matrix, fs);
+}
+
+/** Expand a UPMS matrix by `fs` steps via WASM */
+export async function expandUPMS(matrix: Matrix, fs: number): Promise<Matrix> {
+  await ensureLoaded();
+  return wasmModule.expandUPMS(matrix, fs);
+}
+
+/** Check UPMS legality via WASM */
+export async function isLegalUPMSMatrix(matrix: Matrix): Promise<boolean> {
+  await ensureLoaded();
+  return wasmModule.isLegalUPMSMatrix(matrix);
+}
+
+/** Convert UPMS expression to BMS via WASM */
+export async function upmsToBMS(matrix: Matrix): Promise<Matrix> {
+  await ensureLoaded();
+  return wasmModule.upmsToBMS(matrix);
+}
+
+/** Convert BMS expression to UPMS via WASM */
+export async function bmsToUPMS(matrix: Matrix): Promise<Matrix> {
+  await ensureLoaded();
+  return wasmModule.bmsToUPMS(matrix);
+}
+
+/** Parse a UPMS string into a matrix via WASM */
+export async function parseUPMS(input: string): Promise<Matrix> {
+  await ensureLoaded();
+  return wasmModule.parseUPMS(input);
+}
+
+/** Format a matrix as a compact UPMS string via WASM */
+export async function formatUPMS(matrix: Matrix): Promise<string> {
+  await ensureLoaded();
+  return wasmModule.formatUPMS(matrix);
 }
 
 /** Convert an ordinal term (JS array) to Veblen representations */

@@ -524,8 +524,6 @@ pub fn bocf_to_bms(input: &str, progress: &mut dyn FnMut(&str)) -> Result<String
     loop {
         iter += 1;
         let mut ctx = BmsContext::new();
-        if iter >= 62 {
-        }
         let cur_ord = ctx.bms_to_bocf(&m);
         progress(&iter.to_string());
 
@@ -539,106 +537,151 @@ pub fn bocf_to_bms(input: &str, progress: &mut dyn FnMut(&str)) -> Result<String
             continue;
         }
 
-        // Try fs=0 first (predecessor / start of FS)
-        let m0 = try_expand(&m, 0);
-        if iter >= 62 {
+        match narrow_step(&target, &mut m, &mut iter, input, progress)? {
+            Some(found) => return Ok(matrix_to_bms_str(&found)),
+            None => continue,
         }
-        if m0.is_empty() {
-            return Err(format!("Cannot expand for \"{}\"", input));
-        }
+    }
+}
 
+/// Convert a standard-form BOCF term (value < Ω) to its BMS matrix with the
+/// full search algorithm, starting from ψ(Ω_ω) = (0,0,0)(1,1,1). Every
+/// HPrSS / PSS Hydra value is below ψ(Ω_ω), so the start is always above
+/// the target and the search narrows down to the standard matrix.
+pub fn term_to_bms(target: &Term, progress: &mut dyn FnMut(&str)) -> Result<Matrix, String> {
+    let target = standard_form(target);
+    if !lt(&target, &omega1()) {
+        return Err("Ordinal is too large for BMS conversion".to_string());
+    }
+    let mut m: Matrix = vec![vec![0, 0, 0], vec![1, 1, 1]];
+    let mut iter = 0i32;
+    let label = term_to_string(false, &target);
+    loop {
         iter += 1;
         let mut ctx = BmsContext::new();
-        let m0_ord = ctx.bms_to_bocf(&m0);
+        let cur_ord = ctx.bms_to_bocf(&m);
+        progress(&iter.to_string());
+        if eq(&cur_ord, &target) {
+            return Ok(m);
+        }
+        if !lt(&target, &cur_ord) {
+            return Err(format!("Cannot expand for \"{}\"", label));
+        }
+        match narrow_step(&target, &mut m, &mut iter, &label, progress)? {
+            Some(found) => return Ok(found),
+            None => continue,
+        }
+    }
+}
+
+/// One narrowing step of the BOCF→BMS search: expand `m` by fundamental
+/// sequences, compare ordinals with `target`, and update `m`. Returns
+/// Ok(Some(matrix)) when the target matrix is found, Ok(None) when `m` has
+/// been updated and the search should continue.
+fn narrow_step(
+    target: &Term,
+    m: &mut Matrix,
+    iter: &mut i32,
+    label: &str,
+    progress: &mut dyn FnMut(&str),
+) -> Result<Option<Matrix>, String> {
+    // Try fs=0 first (predecessor / start of FS)
+    let m0 = try_expand(m, 0);
+    if m0.is_empty() {
+        return Err(format!("Cannot expand for \"{}\"", label));
+    }
+
+    *iter += 1;
+    let mut ctx = BmsContext::new();
+    let m0_ord = ctx.bms_to_bocf(&m0);
+    progress(&iter.to_string());
+
+    if eq(&m0_ord, target) {
+        return Ok(Some(m0));
+    }
+    if !lt(&m0_ord, target) {
+        // M0 >= target (strictly > since == already checked)
+        *m = m0;
+        return Ok(None);
+    }
+
+    // M0 < target < M → find smallest fs where Mfs >= target
+    let mut m_prev = m0;
+    let mut m_upper: Matrix = Vec::new();
+    let mut fs_hi: i32 = 1;
+    let mut upper_found = false;
+
+    // Linear search for small fs (up to 5), then exponential
+    while fs_hi <= 5 {
+        m_upper = try_expand(m, fs_hi);
+        *iter += 1;
+        let mut ctx = BmsContext::new();
+        let fs_ord = ctx.bms_to_bocf(&m_upper);
         progress(&iter.to_string());
 
-        if eq(&m0_ord, &target) {
-            return Ok(matrix_to_bms_str(&m0));
+        if eq(&fs_ord, target) {
+            return Ok(Some(m_upper));
         }
-        if !lt(&m0_ord, &target) {
-            // M0 >= target (strictly > since == already checked)
-            m = m0;
-            continue;
+        if !lt(&fs_ord, target) {
+            upper_found = true;
+            break;
         }
+        m_prev = m_upper.clone();
+        fs_hi += 1;
+    }
 
-        // M0 < target < M → find smallest fs where Mfs >= target
-        let mut m_prev = m0;
-        let mut m_upper: Matrix = Vec::new();
-        let mut fs_hi: i32 = 1;
-        let mut upper_found = false;
-
-        // Linear search for small fs (up to 5), then exponential
-        while fs_hi <= 5 {
-            m_upper = try_expand(&m, fs_hi);
-            iter += 1;
+    // Exponential search: double fsHi until an upper bound is found
+    if !upper_found {
+        loop {
+            m_upper = try_expand(m, fs_hi);
+            *iter += 1;
             let mut ctx = BmsContext::new();
             let fs_ord = ctx.bms_to_bocf(&m_upper);
             progress(&iter.to_string());
 
-            if eq(&fs_ord, &target) {
-                return Ok(matrix_to_bms_str(&m_upper));
+            if eq(&fs_ord, target) {
+                return Ok(Some(m_upper));
             }
-            if !lt(&fs_ord, &target) {
+            if !lt(&fs_ord, target) {
                 upper_found = true;
                 break;
             }
             m_prev = m_upper.clone();
             fs_hi += 1;
+            fs_hi *= 2;
         }
+    }
 
-        // Exponential search: double fsHi until an upper bound is found
-        if !upper_found {
-            loop {
-                m_upper = try_expand(&m, fs_hi);
-                iter += 1;
-                let mut ctx = BmsContext::new();
-                let fs_ord = ctx.bms_to_bocf(&m_upper);
-                progress(&iter.to_string());
-
-                if eq(&fs_ord, &target) {
-                    return Ok(matrix_to_bms_str(&m_upper));
-                }
-                if !lt(&fs_ord, &target) {
-                    upper_found = true;
-                    break;
-                }
-                m_prev = m_upper.clone();
-                fs_hi += 1;
-                fs_hi *= 2;
+    // Column binary search between M_prev and M_upper
+    let mut progressed = false;
+    let n0 = m_prev.len() as i32;
+    let n = m_upper.len() as i32;
+    if n - n0 >= 4 {
+        let mut lo = n0;
+        let mut hi = n;
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let mmid: Matrix = m_upper[..mid as usize].to_vec();
+            *iter += 1;
+            let mut ctx = BmsContext::new();
+            let mid_ord = ctx.bms_to_bocf(&mmid);
+            progress(&iter.to_string());
+            if eq(&mid_ord, target) {
+                return Ok(Some(mmid));
+            }
+            if !lt(&mid_ord, target) {
+                hi = mid;
+            } else {
+                lo = mid + 1;
             }
         }
-
-        // Column binary search between M_prev and M_upper
-        let mut progressed = false;
-        let n0 = m_prev.len() as i32;
-        let n = m_upper.len() as i32;
-        if n - n0 >= 4 {
-            let mut lo = n0;
-            let mut hi = n;
-            while lo < hi {
-                let mid = (lo + hi) / 2;
-                let mmid: Matrix = m_upper[..mid as usize].to_vec();
-                iter += 1;
-                let mut ctx = BmsContext::new();
-                let mid_ord = ctx.bms_to_bocf(&mmid);
-                progress(&iter.to_string());
-                if eq(&mid_ord, &target) {
-                    return Ok(matrix_to_bms_str(&mmid));
-                }
-                if !lt(&mid_ord, &target) {
-                    hi = mid;
-                } else {
-                    lo = mid + 1;
-                }
-            }
-            if lo < n {
-                m = m_upper[..lo as usize].to_vec();
-                progressed = true;
-            }
-        }
-        if !progressed {
-            m = m_upper.clone();
+        if lo < n {
+            *m = m_upper[..lo as usize].to_vec();
             progressed = true;
         }
     }
+    if !progressed {
+        *m = m_upper.clone();
+    }
+    Ok(None)
 }

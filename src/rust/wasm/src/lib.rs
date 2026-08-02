@@ -10,7 +10,7 @@ use bms_core::triangular::{bms_to_triangular, triangular_to_bms};
 use bms_core::wy::{
     build_wy_mountain_with_rows, expand_1y, expand_wy_seq,
 };
-use bms_core::y_dbms::{dbms_to_bms, dbms_to_one_y, dbms_to_string, one_y_to_dbms};
+use bms_core::y_dbms::{dbms_to_bms, dbms_to_string, one_y_to_dbms};
 use bms_core::zero_y::{build_mountain, bms_to_0y_sequence, zero_y_expand, zero_y_to_bms};
 use bms_core::Matrix;
 use wasm_bindgen::prelude::*;
@@ -240,6 +240,30 @@ pub fn parse_and_eval_bocf_js(input: &str) -> JsValue {
                 js_sys::Reflect::set(&obj, &JsValue::from("ordinal"), &JsValue::from(term_to_string(false, &val))).ok();
                 js_sys::Reflect::set(&obj, &JsValue::from("ordinalJS"), &term_to_js(&val)).ok();
                 js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from("")).ok();
+                // BOCF → standard form → PSS Hydra (补层'd) and HPrSS (LP of unfilled)
+                if let Ok(unfilled) = bms_core::hydra::term_to_hydra(&standard_form(&val)) {
+                    let norm = bms_core::hydra::fill_layers(&unfilled);
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from("hydra"),
+                        &JsValue::from(bms_core::hydra::format_hydra_psi(&norm)),
+                    )
+                    .ok();
+                    js_sys::Reflect::set(
+                        &obj,
+                        &JsValue::from("hprss"),
+                        &vec_to_js_seq(&bms_core::hydra::hydra_to_hprss(&unfilled)),
+                    )
+                    .ok();
+                    match bms_core::hydra::hydra_to_lprss(&unfilled) {
+                        Ok(seq) => {
+                            js_sys::Reflect::set(&obj, &JsValue::from("lprss"), &vec_to_js_seq(&seq)).ok();
+                        }
+                        Err(_) => {
+                            js_sys::Reflect::set(&obj, &JsValue::from("lprss"), &JsValue::from("")).ok();
+                        }
+                    }
+                }
             }
         },
     }
@@ -429,4 +453,185 @@ pub fn parse_upms_js(input: &str) -> Result<JsValue, JsValue> {
 #[wasm_bindgen(js_name = "formatUPMS")]
 pub fn format_upms_js(matrix: JsValue) -> String {
     bms_core::upms::format_upms(&js_to_matrix_no_pad(&matrix))
+}
+
+// ════════════════════════════════════════════════════════════════
+// HPrSS + PSS Hydra
+// ════════════════════════════════════════════════════════════════
+
+fn hydra_analyze_obj(input: &str) -> JsValue {
+    let obj = js_sys::Object::new();
+    match bms_core::hydra::parse_hydra(input) {
+        Err(e) => {
+            js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from(&e)).ok();
+        }
+        Ok(h) => {
+            fill_hydra_analyze_obj(&obj, &h);
+        }
+    }
+    obj.into()
+}
+
+fn fill_hydra_analyze_obj(obj: &js_sys::Object, h: &bms_core::hydra::Hydra) {
+    let norm = bms_core::hydra::normalize_hydra(h);
+    let hydra_str = bms_core::hydra::format_hydra_psi(&norm);
+    js_sys::Reflect::set(obj, &JsValue::from("hydra"), &JsValue::from(&hydra_str)).ok();
+    js_sys::Reflect::set(obj, &JsValue::from("legal"), &JsValue::from(bms_core::hydra::is_legal_hydra(&norm))).ok();
+    let ordinal = bms_core::hydra::hydra_to_bocf(h);
+    let s = term_to_string(false, &ordinal);
+    js_sys::Reflect::set(obj, &JsValue::from("ordinal"), &JsValue::from(&s)).ok();
+    js_sys::Reflect::set(obj, &JsValue::from("ordinalJS"), &term_to_js(&ordinal)).ok();
+    js_sys::Reflect::set(obj, &JsValue::from("veblen"), &JsValue::from(term_to_veblen(&ordinal))).ok();
+    js_sys::Reflect::set(obj, &JsValue::from("veblenPlain"), &JsValue::from(term_to_veblen_plain(&ordinal))).ok();
+    js_sys::Reflect::set(obj, &JsValue::from("veblenMatrix"), &JsValue::from(term_to_veblen_matrix(&ordinal))).ok();
+    js_sys::Reflect::set(obj, &JsValue::from("veblenMatrixPlain"), &JsValue::from(term_to_veblen_matrix_plain(&ordinal))).ok();
+    let bms = match bms_core::hydra::hydra_to_bms(&norm) {
+        Ok(m) => m,
+        Err(_) => Vec::new(),
+    };
+    js_sys::Reflect::set(obj, &JsValue::from("bms"), &matrix_to_js(&bms)).ok();
+    let hprss = bms_core::hydra::hydra_to_hprss_standard(h);
+    js_sys::Reflect::set(obj, &JsValue::from("hprss"), &vec_to_js_seq(&hprss)).ok();
+    let lprss = bms_core::hydra::hydra_to_lprss(h);
+    match lprss {
+        Ok(seq) => {
+            js_sys::Reflect::set(obj, &JsValue::from("lprss"), &vec_to_js_seq(&seq)).ok();
+        }
+        Err(_) => {
+            js_sys::Reflect::set(obj, &JsValue::from("lprss"), &JsValue::from("")).ok();
+        }
+    }
+    // 0-Y: hydra → standard BMS → the 0-Y system's own conversion
+    let zero_y = match bms_core::hydra::hydra_to_bms(h) {
+        Ok(m) => bms_core::zero_y::bms_to_0y_sequence(&m),
+        Err(_) => String::new(),
+    };
+    js_sys::Reflect::set(obj, &JsValue::from("zeroY"), &JsValue::from(&zero_y)).ok();
+}
+
+#[wasm_bindgen(js_name = "hydraAnalyze")]
+pub fn hydra_analyze_js(input: &str) -> JsValue {
+    hydra_analyze_obj(input)
+}
+
+#[wasm_bindgen(js_name = "hprssAnalyze")]
+pub fn hprss_analyze_js(seq: JsValue) -> JsValue {
+    let v = js_seq_to_vec(&seq);
+    let obj = js_sys::Object::new();
+    if v.is_empty() || v[0] < 1 || v.iter().any(|&x| x < 1) {
+        js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from("HPrSS sequence must start with a positive integer")).ok();
+        return obj.into();
+    }
+    let h = bms_core::hydra::hprss_to_hydra(&v);
+    fill_hydra_analyze_obj(&obj, &h);
+    obj.into()
+}
+
+#[wasm_bindgen(js_name = "lprssAnalyze")]
+pub fn lprss_analyze_js(seq: JsValue) -> JsValue {
+    let v = js_seq_to_vec(&seq);
+    let obj = js_sys::Object::new();
+    if v.is_empty() || v[0] < 1 || v.iter().any(|&x| x < 1) {
+        js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from("LPrSS sequence must start with a positive integer")).ok();
+        return obj.into();
+    }
+    let h = bms_core::hydra::lprss_to_hydra(&v);
+    fill_hydra_analyze_obj(&obj, &h);
+    obj.into()
+}
+
+#[wasm_bindgen(js_name = "expandHPRSS")]
+pub fn expand_hprss_js(seq: JsValue, n: i32) -> JsValue {
+    vec_to_js_seq(&bms_core::hydra::expand_hprss(&js_seq_to_vec(&seq), n))
+}
+
+#[wasm_bindgen(js_name = "buildHPRSSMountain")]
+pub fn build_hprss_mountain_js(seq: JsValue) -> JsValue {
+    mountain_to_js(&bms_core::hydra::build_hprss_mountain(&js_seq_to_vec(&seq)))
+}
+
+#[wasm_bindgen(js_name = "expandLPRSS")]
+pub fn expand_lprss_js(seq: JsValue, n: i32) -> JsValue {
+    vec_to_js_seq(&bms_core::hydra::expand_lprss(&js_seq_to_vec(&seq), n))
+}
+
+#[wasm_bindgen(js_name = "buildLPRSSMountain")]
+pub fn build_lprss_mountain_js(seq: JsValue) -> JsValue {
+    mountain_to_js(&bms_core::hydra::build_lprss_mountain(&js_seq_to_vec(&seq)))
+}
+
+#[wasm_bindgen(js_name = "expandHydra")]
+pub fn expand_hydra_js(input: &str, n: i32) -> Result<String, JsValue> {
+    let h = bms_core::hydra::parse_hydra(input)
+        .map_err(|e| JsValue::from(&js_sys::Error::new(&e)))?;
+    match bms_core::hydra::expand_hydra(&h, n) {
+        Ok(e) => Ok(bms_core::hydra::format_hydra_psi(&e)),
+        Err(e) => Err(JsValue::from(&js_sys::Error::new(&e))),
+    }
+}
+
+#[wasm_bindgen(js_name = "hprssToHydra")]
+pub fn hprss_to_hydra_js(seq: JsValue) -> String {
+    bms_core::hydra::format_hydra_psi(&bms_core::hydra::hprss_to_hydra(&js_seq_to_vec(&seq)))
+}
+
+#[wasm_bindgen(js_name = "hydraToHPRSS")]
+pub fn hydra_to_hprss_js(input: &str) -> Result<JsValue, JsValue> {
+    let h = bms_core::hydra::parse_hydra(input)
+        .map_err(|e| JsValue::from(&js_sys::Error::new(&e)))?;
+    Ok(vec_to_js_seq(&bms_core::hydra::hydra_to_hprss_standard(&h)))
+}
+
+#[wasm_bindgen(js_name = "hydraToBMS")]
+pub fn hydra_to_bms_js(input: &str) -> Result<JsValue, JsValue> {
+    let h = bms_core::hydra::parse_hydra(input)
+        .map_err(|e| JsValue::from(&js_sys::Error::new(&e)))?;
+    let m = bms_core::hydra::hydra_to_bms(&h).map_err(|e| JsValue::from(&js_sys::Error::new(&e)))?;
+    Ok(matrix_to_js(&m))
+}
+
+#[wasm_bindgen(js_name = "bmsToHydra")]
+pub fn bms_to_hydra_js(matrix: JsValue) -> Result<String, JsValue> {
+    let h = bms_core::hydra::bms_to_hydra(&js_to_matrix_no_pad(&matrix))
+        .map_err(|e| JsValue::from(&js_sys::Error::new(&e)))?;
+    Ok(bms_core::hydra::format_hydra_psi(&h))
+}
+
+/// BMS → BOCF standard form → PSS Hydra (补层'd for display) and HPrSS
+/// (LP of the unfilled hydra).
+#[wasm_bindgen(js_name = "bmsToHydraAnalysis")]
+pub fn bms_to_hydra_analysis_js(matrix: JsValue) -> JsValue {
+    let m = js_to_matrix(&matrix);
+    let obj = js_sys::Object::new();
+    if bms_core::bms::is_gte_ebo(&m) {
+        return obj.into();
+    }
+    let ordinal = bms_core::bms::bms_to_bocf(&m);
+    match bms_core::hydra::term_to_hydra(&ordinal) {
+        Ok(unfilled) => {
+            let norm = bms_core::hydra::fill_layers(&unfilled);
+            js_sys::Reflect::set(
+                &obj,
+                &JsValue::from("hydra"),
+                &JsValue::from(bms_core::hydra::format_hydra_psi(&norm)),
+            )
+            .ok();
+            js_sys::Reflect::set(
+                &obj,
+                &JsValue::from("hprss"),
+                &vec_to_js_seq(&bms_core::hydra::hydra_to_hprss(&unfilled)),
+            )
+            .ok();
+            match bms_core::hydra::hydra_to_lprss(&unfilled) {
+                Ok(seq) => {
+                    js_sys::Reflect::set(&obj, &JsValue::from("lprss"), &vec_to_js_seq(&seq)).ok();
+                }
+                Err(_) => {
+                    js_sys::Reflect::set(&obj, &JsValue::from("lprss"), &JsValue::from("")).ok();
+                }
+            }
+        }
+        Err(_) => {}
+    }
+    obj.into()
 }

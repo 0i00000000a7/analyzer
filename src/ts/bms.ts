@@ -117,7 +117,7 @@ export async function bmsTo0YSequence(matrix: Matrix): Promise<string> {
 /** Parse and evaluate a BOCF expression via WASM, returning {ast, ordinal, ordinalJS, error} */
 export async function parseAndEvalBOCF(
   input: string,
-): Promise<{ ast: string; ordinal: string; ordinalJS: any[]; error: string }> {
+): Promise<{ ast: string; ordinal: string; ordinalJS: any[]; error: string; hydra?: string; hprss?: number[] }> {
   await ensureLoaded();
   return wasmModule.parseAndEvalBOCF(input);
 }

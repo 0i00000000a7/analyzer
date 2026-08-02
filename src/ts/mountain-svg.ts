@@ -32,6 +32,35 @@ function separatorLineCount(rowA: number[], rowB: number[]): number {
   return 0;
 }
 
+// JetBrains Mono is monospace with a 0.6em advance; labels render at
+// font-size 14 with superscripts at 0.65em.
+const MONO_W = 14 * 0.6; // 8.4 px per baseline character
+const MONO_SUP_W = 14 * 0.65 * 0.6; // 5.46 px per superscript character
+
+/** Exact rendered width (px) of an ordinal row label. */
+function ordinalLabelWidth(ord: number[]): number {
+  let end = ord.length;
+  while (end > 0 && ord[end - 1] === 0) end--;
+  let w = 0;
+  let first = true;
+  for (let i = end - 1; i >= 0; i--) {
+    const c = ord[i];
+    if (c === 0) continue;
+    if (!first) w += MONO_W; // '+'
+    first = false;
+    if (i === 0) {
+      w += MONO_W * String(c).length;
+    } else if (i === 1) {
+      // c === 1 renders as just "ω"
+      w += MONO_W * (c === 1 ? 1 : 1 + String(c).length);
+    } else {
+      // "ω" + superscript exponent + (coefficient when c > 1)
+      w += MONO_W + MONO_SUP_W * String(i).length + (c > 1 ? MONO_W * String(c).length : 0);
+    }
+  }
+  return w;
+}
+
 export function renderMountain0Y(mountain: Mountain): string {
   if (!mountain.length) return '';
   let layers = mountain.length;
@@ -91,7 +120,8 @@ export function renderMountainWY(mountain: Mountain, rowLabels: number[][]): str
   const cols = mountain[0].length;
   const gapX = 50;
   const gapY = 55;
-  const padX = 65;
+  const maxLabelW = rowLabels.reduce((m, r) => Math.max(m, ordinalLabelWidth(r)), 0);
+  const padX = Math.max(65, maxLabelW + 25);
   const padY = 30;
   const extraGap = 30;
 
@@ -189,7 +219,8 @@ export function renderMountain1Y(mountain: Mountain, rowLabels: number[][]): str
   if (cols === 0) return '';
   const gapX = 50;
   const gapY = 55;
-  const padX = 65;
+  const maxLabelW = rowLabels.reduce((m, r) => Math.max(m, ordinalLabelWidth(r)), 0);
+  const padX = Math.max(65, maxLabelW + 25);
   const padY = 30;
   const svgW = Math.max(cols * gapX + padX * 2, 200);
   const svgH = layers * gapY + padY * 2;

@@ -19,9 +19,10 @@ import { parse0Y, zeroYToBMS, zeroYExpand, buildMountain } from '../ts/bms-zero-
 import { triangularToBMS, bmsToTriangular } from '../ts/bms-triangular.js';
 import { expand1Y, expandWY, buildWYMountain, build1YMountain } from '../ts/wy.js';
 import { oneYToDBMS, dbmsToString, dbmsToBMS } from '../ts/y_dbms.js';
+import { hydraAnalyze, hprssAnalyze, lprssAnalyze, expandHPRSS, expandHydra, buildHPRSSMountain, bmsToHydraAnalysis, expandLPRSS, buildLPRSSMountain } from '../ts/hydra.js';
 import type { AnalysisResult, Matrix, Mountain } from '../ts/types.js';
 
-export type InputMode = 'bms' | '0y' | '1y' | 'wy' | 'bocf' | 'upms';
+export type InputMode = 'bms' | '0y' | '1y' | 'wy' | 'bocf' | 'upms' | 'hprss' | 'lprss' | 'hydra';
 export type VeblenMode = 'v' | 'm';
 export type BmsDisplayMode = 'matrix' | 'flat' | 'compact';
 export type UpmsDisplayMode = 'matrix' | 'flat' | 'compact';
@@ -84,16 +85,22 @@ export function useAnalysis(
   const bmsHtml = ref('');
   const triangularHtml = ref('');
   const upmsHtml = ref('');
+  const hydraHtml = ref('');
+  const hprssHtml = ref('');
+  const lprssHtml = ref('');
 
   const showDbmsRow = ref(false);
   const showBmsRow = ref(false);
   const showTriangularRow = ref(false);
   const showUpmsRow = ref(false);
   const showMountainRow = ref(false);
+  const showHydraRow = ref(false);
+  const showHprssRow = ref(false);
+  const showLprssRow = ref(false);
 
   const bmsRaw = ref('');
   const upmsRaw = ref('');
-  const mountainType = ref<'0y' | '1y' | 'wy' | null>(null);
+  const mountainType = ref<'0y' | '1y' | 'wy' | 'hprss' | 'lprss' | 'hydra' | null>(null);
   const mountainData = ref<Mountain | null>(null);
   const mountainRowLabels = ref<number[][] | null>(null);
 
@@ -103,6 +110,8 @@ export function useAnalysis(
   let current1YSeq: number[] | null = null;
   let currentWYSeq: number[] | null = null;
   let currentUPMSMatrix: number[][] | null = null;
+  let currentHPRSSSeq: number[] | null = null;
+  const currentLPRSSSeq = ref<number[]>([]);
 
   // BOCF conversion state
   const converting = ref(false);
@@ -136,7 +145,11 @@ export function useAnalysis(
     return katex.renderToString('\\text{' + aligned + '}', { throwOnError: false });
   }
 
-  function renderUpms(raw: string): string {
+  function renderHydra(s: string): string {
+  return katex.renderToString(s.replace(/ψ/g, '\\psi '), { throwOnError: false });
+}
+
+function renderUpms(raw: string): string {
     if (raw === '(empty)' || raw === '(error)') return raw;
     const aligned = alignMatrixStr(raw);
     if (upmsDisplayMode.value === 'matrix') {
@@ -163,11 +176,17 @@ export function useAnalysis(
     bmsHtml.value = '';
     triangularHtml.value = '';
     upmsHtml.value = '';
+    hydraHtml.value = '';
+    hprssHtml.value = '';
+    lprssHtml.value = '';
     showDbmsRow.value = false;
     showBmsRow.value = false;
     showTriangularRow.value = false;
     showUpmsRow.value = false;
     showMountainRow.value = false;
+    showHydraRow.value = false;
+    showHprssRow.value = false;
+    showLprssRow.value = false;
     bmsRaw.value = '';
     upmsRaw.value = '';
     mountainType.value = null;
@@ -179,6 +198,8 @@ export function useAnalysis(
     current1YSeq = null;
     currentWYSeq = null;
     currentUPMSMatrix = null;
+    currentHPRSSSeq = null;
+    currentLPRSSSeq.value = [];
   }
 
   async function update() {
@@ -207,6 +228,18 @@ export function useAnalysis(
       }
       if (inputMode.value === 'upms') {
         await handleUPMS(rawInput);
+        return;
+      }
+      if (inputMode.value === 'hprss') {
+        await handleHPRSS(rawInput);
+        return;
+      }
+      if (inputMode.value === 'lprss') {
+        await handleLPRSS(rawInput);
+        return;
+      }
+      if (inputMode.value === 'hydra') {
+        await handleHydra(rawInput);
         return;
       }
 
@@ -246,6 +279,20 @@ export function useAnalysis(
         const v = getVeblenOutput(r, veblenMode.value, sugarEnabled.value);
         if (v) veblenHtml.value = katex.renderToString(v, { throwOnError: false });
       }
+
+      const ha = await bmsToHydraAnalysis(matrix);
+      if (ha.hydra) {
+        hydraHtml.value = renderHydra(ha.hydra);
+        showHydraRow.value = true;
+      }
+      if (ha.hprss && ha.hprss.length > 0) {
+        hprssHtml.value = katex.renderToString('\\text{' + ha.hprss.join(',') + '}', { throwOnError: false });
+        showHprssRow.value = true;
+      }
+      if (ha.lprss && ha.lprss.length > 0) {
+        lprssHtml.value = katex.renderToString('\\text{' + ha.lprss.join(',') + '}', { throwOnError: false });
+        showLprssRow.value = true;
+      }
     } catch {
       ordinalHtml.value = '(error)';
     }
@@ -268,6 +315,25 @@ export function useAnalysis(
       }
     }
     showBmsRow.value = true;
+    try {
+      const bms = await bocfToBMS(rawInput, () => {});
+      if (bms !== '(empty)') {
+        const bmsMatrix = parseMatrix(bms);
+        const ha = await bmsToHydraAnalysis(bmsMatrix);
+        if (ha.hydra) {
+          hydraHtml.value = renderHydra(ha.hydra);
+          showHydraRow.value = true;
+        }
+        if (ha.hprss && ha.hprss.length > 0) {
+          hprssHtml.value = katex.renderToString('\\text{' + ha.hprss.join(',') + '}', { throwOnError: false });
+          showHprssRow.value = true;
+        }
+        if (ha.lprss && ha.lprss.length > 0) {
+          lprssHtml.value = katex.renderToString('\\text{' + ha.lprss.join(',') + '}', { throwOnError: false });
+          showLprssRow.value = true;
+        }
+      }
+    } catch {}
   }
 
   async function handle0Y(rawInput: string) {
@@ -300,6 +366,22 @@ export function useAnalysis(
       const v = getVeblenOutput(r, veblenMode.value, sugarEnabled.value);
       if (v) veblenHtml.value = katex.renderToString(v, { throwOnError: false });
     }
+
+    try {
+      const ha = await bmsToHydraAnalysis(matrix);
+      if (ha.hydra) {
+        hydraHtml.value = renderHydra(ha.hydra);
+        showHydraRow.value = true;
+      }
+      if (ha.hprss && ha.hprss.length > 0) {
+        hprssHtml.value = katex.renderToString('\\text{' + ha.hprss.join(',') + '}', { throwOnError: false });
+        showHprssRow.value = true;
+      }
+      if (ha.lprss && ha.lprss.length > 0) {
+        lprssHtml.value = katex.renderToString('\\text{' + ha.lprss.join(',') + '}', { throwOnError: false });
+        showLprssRow.value = true;
+      }
+    } catch {}
 
     try {
       const mountain = await buildMountain(seq);
@@ -455,6 +537,143 @@ export function useAnalysis(
     }
   }
 
+  async function handleHPRSS(rawInput: string) {
+    const seq = parse0Y(rawInput);
+    if (seq.length === 0 || seq.some(isNaN)) return;
+    currentHPRSSSeq = seq;
+
+    const ha = await hprssAnalyze(seq);
+    if (ha.error) {
+      ordinalHtml.value = '(error)';
+      return;
+    }
+    ordinalHtml.value = ha.ordinal ? katex.renderToString(ha.ordinal, { throwOnError: false }) : '';
+
+    if (ha.veblen) {
+      veblenHtml.value = katex.renderToString(ha.veblen, { throwOnError: false });
+    }
+
+    if (ha.hydra) {
+      hydraHtml.value = renderHydra(ha.hydra);
+      showHydraRow.value = true;
+    }
+
+    // Show HPRSS sequence
+    if (ha.hprss && ha.hprss.length > 0) {
+      hprssHtml.value = katex.renderToString('\\text{' + ha.hprss.join(',') + '}', { throwOnError: false });
+      showHprssRow.value = true;
+    }
+
+    // Show BMS conversion
+    if (ha.bms && ha.bms.length > 0) {
+      const flat = matrixToDisplayStr(ha.bms);
+      bmsRaw.value = flat;
+      bmsHtml.value = renderBms(flat);
+      showBmsRow.value = true;
+    }
+
+    // Mountain
+    try {
+      const mountain = await buildHPRSSMountain(seq);
+      if (mountain && mountain.length) {
+        mountainData.value = mountain;
+        mountainType.value = 'hprss';
+        mountainRowLabels.value = null;
+        showMountainRow.value = true;
+      }
+    } catch {}
+  }
+
+  async function handleLPRSS(rawInput: string) {
+    const seq = parse0Y(rawInput);
+    if (seq.length === 0 || seq.some(isNaN)) return;
+    currentLPRSSSeq.value = seq;
+
+    const ha = await lprssAnalyze(seq);
+    if (ha.error) {
+      ordinalHtml.value = '(error)';
+      return;
+    }
+    ordinalHtml.value = ha.ordinal ? katex.renderToString(ha.ordinal, { throwOnError: false }) : '';
+
+    if (ha.veblen) {
+      veblenHtml.value = katex.renderToString(ha.veblen, { throwOnError: false });
+    }
+
+    // Show hydra
+    if (ha.hydra) {
+      hydraHtml.value = renderHydra(ha.hydra);
+      showHydraRow.value = true;
+    }
+
+    // Show HPRSS
+    if (ha.hprss && ha.hprss.length > 0) {
+      hprssHtml.value = katex.renderToString('\\text{' + ha.hprss.join(',') + '}', { throwOnError: false });
+      showHprssRow.value = true;
+    }
+
+    // Show LPRSS
+    if (ha.lprss && ha.lprss.length > 0) {
+      lprssHtml.value = katex.renderToString('\\text{' + ha.lprss.join(',') + '}', { throwOnError: false });
+      showLprssRow.value = true;
+    }
+
+    // Show BMS conversion
+    if (ha.bms && ha.bms.length > 0) {
+      const flat = matrixToDisplayStr(ha.bms);
+      bmsRaw.value = flat;
+      bmsHtml.value = renderBms(flat);
+      showBmsRow.value = true;
+    }
+
+    // Mountain
+    try {
+      const mountain = await buildLPRSSMountain(seq);
+      if (mountain && mountain.length) {
+        mountainData.value = mountain;
+        mountainType.value = 'lprss';
+        mountainRowLabels.value = null;
+        showMountainRow.value = true;
+      }
+    } catch {}
+  }
+
+  async function handleHydra(rawInput: string) {
+    const ha = await hydraAnalyze(rawInput);
+    if (ha.error) {
+      ordinalHtml.value = '(error)';
+      return;
+    }
+    ordinalHtml.value = ha.ordinal ? katex.renderToString(ha.ordinal, { throwOnError: false }) : '';
+
+    if (ha.veblen) {
+      veblenHtml.value = katex.renderToString(ha.veblen, { throwOnError: false });
+    }
+
+    if (ha.hydra) {
+      hydraHtml.value = renderHydra(ha.hydra);
+      showHydraRow.value = true;
+    }
+
+    if (ha.hprss && ha.hprss.length > 0) {
+      hprssHtml.value = katex.renderToString('\\text{' + ha.hprss.join(',') + '}', { throwOnError: false });
+      showHprssRow.value = true;
+    }
+
+    if (ha.lprss && ha.lprss.length > 0) {
+      lprssHtml.value = katex.renderToString('\\text{' + ha.lprss.join(',') + '}', { throwOnError: false });
+      showLprssRow.value = true;
+    }
+
+    // Show BMS conversion
+    if (ha.bms && ha.bms.length > 0) {
+      const flat = matrixToDisplayStr(ha.bms);
+      bmsRaw.value = flat;
+      bmsHtml.value = renderBms(flat);
+      showBmsRow.value = true;
+    }
+  }
+
   // BOCF conversion
   async function convertBocfToBms() {
     converting.value = true;
@@ -522,6 +741,18 @@ export function useAnalysis(
         if (!currentUPMSMatrix) { expandResult.value = '(no matrix)'; return; }
         const expanded = await expandUPMS(currentUPMSMatrix, fs);
         expandResult.value = renderUpms(matrixToDisplayStr(expanded));
+      } else if (inputMode.value === 'hprss') {
+        if (!currentHPRSSSeq) { expandResult.value = '(no sequence)'; return; }
+        const expanded = await expandHPRSS(currentHPRSSSeq, fs);
+        if (expanded && expanded.length > 0) {
+          expandResult.value = expanded.join(',');
+        }
+      } else if (inputMode.value === 'lprss') {
+        if (!currentLPRSSSeq.value || currentLPRSSSeq.value.length === 0) { expandResult.value = '(no sequence)'; return; }
+        const expanded = await expandLPRSS(currentLPRSSSeq.value, fs);
+        if (expanded && expanded.length > 0) {
+          expandResult.value = expanded.join(',');
+        }
       } else {
         const rawInput = transformInput(inputValue.value, inputMode.value);
         const matrix = parseMatrix(rawInput);
@@ -555,7 +786,9 @@ export function useAnalysis(
 
   return {
     ordinalHtml, veblenHtml, zeroYHtml, dbmsHtml, bmsHtml, triangularHtml, upmsHtml,
+    hydraHtml, hprssHtml, lprssHtml,
     showDbmsRow, showBmsRow, showTriangularRow, showUpmsRow, showMountainRow,
+    showHydraRow, showHprssRow, showLprssRow,
     bmsRaw, mountainType, mountainData, mountainRowLabels,
     converting, convertStatus, convertBocfToBms, cancelConvert,
     expandResult, expandFs, doExpand,

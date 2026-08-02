@@ -4,7 +4,7 @@ import type { Mountain } from '../ts/types.js';
 import { renderMountain0Y, renderMountainWY, renderMountain1Y } from '../ts/mountain-svg.js';
 
 const props = defineProps<{
-  mountainType: '0y' | '1y' | 'wy' | null;
+  mountainType: '0y' | '1y' | 'wy' | 'hprss' | 'lprss' | null;
   mountainData: Mountain | null;
   mountainRowLabels: number[][] | null;
 }>();
@@ -18,7 +18,7 @@ watchEffect(() => {
     return;
   }
   let svg = '';
-  if (props.mountainType === '0y') {
+  if (props.mountainType === '0y' || props.mountainType === 'hprss' || props.mountainType === 'lprss') {
     svg = renderMountain0Y(props.mountainData);
   } else if (props.mountainType === 'wy' && props.mountainRowLabels) {
     svg = renderMountainWY(props.mountainData, props.mountainRowLabels);

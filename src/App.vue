@@ -42,10 +42,16 @@ const analysis = useAnalysis(inputMode, inputValue, veblenMode, sugarEnabled, bm
     :bmsHtml="analysis.bmsHtml.value"
     :triangularHtml="analysis.triangularHtml.value"
     :upmsHtml="analysis.upmsHtml.value"
+    :hydraHtml="analysis.hydraHtml.value"
+    :hprssHtml="analysis.hprssHtml.value"
+    :lprssHtml="analysis.lprssHtml.value"
     :showDbmsRow="analysis.showDbmsRow.value"
     :showBmsRow="analysis.showBmsRow.value"
     :showTriangularRow="analysis.showTriangularRow.value"
     :showUpmsRow="analysis.showUpmsRow.value"
+    :showHydraRow="analysis.showHydraRow.value"
+    :showHprssRow="analysis.showHprssRow.value"
+    :showLprssRow="analysis.showLprssRow.value"
     :converting="analysis.converting.value"
     :convertStatus="analysis.convertStatus.value"
     @convert="analysis.convertBocfToBms"
@@ -53,7 +59,7 @@ const analysis = useAnalysis(inputMode, inputValue, veblenMode, sugarEnabled, bm
   />
   <ExpandPanel
     :expandResult="analysis.expandResult.value"
-    v-model:fs="analysis.expandFs"
+    v-model:fs="analysis.expandFs.value"
     @expand="analysis.doExpand"
   />
   <MountainDiagram

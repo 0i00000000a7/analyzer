@@ -1,6 +1,11 @@
 
 use bms_core::bms::{bms_to_bocf, is_eq_ebo, is_gte_ebo};
 use bms_core::expand::expand_bms;
+use bms_core::hydra::{
+    expand_hprss, expand_hydra, expand_lprss, format_hydra_psi, hydra_to_bms, hydra_to_bocf,
+    hydra_to_hprss, hydra_to_hprss_standard, hydra_to_lprss, hprss_to_hydra, lprss_to_hydra,
+    normalize_hydra, parse_hydra, term_to_hydra,
+};
 use bms_core::parser::{bocf_to_bms, eval_ast, parse_bocf};
 use bms_core::term::*;
 use bms_core::triangular::{bms_to_triangular, triangular_to_bms};
@@ -123,6 +128,9 @@ enum OutputType {
     Veblen,
     ZeroY,
     Triangular,
+    Hydra,
+    Hprss,
+    Lprss,
 }
 
 fn parse_output_type(s: &str) -> OutputType {
@@ -132,6 +140,9 @@ fn parse_output_type(s: &str) -> OutputType {
         "veblen" | "φ" | "phi" => OutputType::Veblen,
         "0y" | "0-y" | "seq" => OutputType::ZeroY,
         "triangular" => OutputType::Triangular,
+        "hydra" | "pss" => OutputType::Hydra,
+        "hprss" => OutputType::Hprss,
+        "lprss" => OutputType::Lprss,
         _ => OutputType::All,
     }
 }
@@ -269,6 +280,7 @@ fn cmd_bms(args: &[String]) -> i32 {
                 println!("{}", label);
             }
             OutputType::ZeroY => print_0y(&m),
+            OutputType::Lprss => eprintln!("Error: ordinal is beyond the LPrSS limit φ(ω,0)"),
             OutputType::Bms => print_bms(&m),
             _ => {}
         }
@@ -294,7 +306,14 @@ fn cmd_bms(args: &[String]) -> i32 {
         OutputType::Bms => print_bms(&m),
         OutputType::Veblen => print_veblen(&ordinal, latex_mode),
         OutputType::ZeroY => print_0y(&m),
+        OutputType::Lprss => {
+            match term_to_hydra(&ordinal).and_then(|h| hydra_to_lprss(&h)) {
+                Ok(seq) => println!("LPrSS: {}", format_seq(&seq)),
+                Err(e) => eprintln!("Error: {}", e),
+            }
+        }
         OutputType::Triangular => {}
+        _ => {}
     }
     0
 }
@@ -471,6 +490,182 @@ fn cmd_wy(args: &[String]) -> i32 {
     0
 }
 
+fn cmd_hprss(args: &[String]) -> i32 {
+    if args.is_empty() {
+        eprintln!("Usage: analyzer-cli hprss <sequence> [--expand <n>] [--to <fmt>]");
+        return 1;
+    }
+    let input = &args[0];
+    let seq = parse_seq(input);
+    if seq.is_empty() || seq[0] < 1 {
+        eprintln!("Error: HPrSS sequence must start with a positive integer");
+        return 1;
+    }
+
+    if let Some(n) = flag_value(args, "--expand") {
+        let expanded = expand_hprss(&seq, n);
+        println!("{}", format_seq(&expanded));
+        return 0;
+    }
+
+    let mut out = OutputType::All;
+    for (i, a) in args.iter().enumerate() {
+        if a == "--to" && i + 1 < args.len() {
+            out = parse_output_type(&args[i + 1]);
+            break;
+        }
+    }
+
+    let h = normalize_hydra(&hprss_to_hydra(&seq));
+    match out {
+        OutputType::All => {
+            println!("PSS Hydra: {}", format_hydra_psi(&h));
+            print_hydra_ordinal(&hprss_to_hydra(&seq));
+            let bms = hydra_to_bms(&h);
+            match bms {
+                Ok(m) => {
+                    println!("BMS: {}", format_matrix(&m));
+                    let zero_y = bms_to_0y_sequence(&m);
+                    if !zero_y.is_empty() {
+                        println!("0-Y: {}", zero_y);
+                    }
+                }
+                Err(e) => println!("BMS: (error: {})", e),
+            }
+        }
+        OutputType::Hydra => println!("{}", format_hydra_psi(&h)),
+        OutputType::Hprss => println!("{}", format_seq(&seq)),
+        OutputType::Bms => match hydra_to_bms(&h) {
+            Ok(m) => println!("{}", format_matrix(&m)),
+            Err(e) => println!("(error: {})", e),
+        },
+        OutputType::Bocf => {
+            let ordinal = hydra_to_bocf(&hprss_to_hydra(&seq));
+            print_bocf(&ordinal, false);
+        }
+        OutputType::Veblen => {
+            let ordinal = hydra_to_bocf(&hprss_to_hydra(&seq));
+            print_veblen(&ordinal, false);
+        }
+        _ => {}
+    }
+    0
+}
+
+fn cmd_lprss(args: &[String]) -> i32 {
+    if args.is_empty() {
+        eprintln!("Usage: analyzer-cli lprss <sequence> [--expand <n>] [--to <fmt>]");
+        return 1;
+    }
+    let seq = parse_seq(&args[0]);
+    if seq.is_empty() || seq[0] < 1 {
+        eprintln!("Error: LPrSS sequence must start with a positive integer");
+        return 1;
+    }
+    if let Some(n) = flag_value(args, "--expand") {
+        println!("{}", format_seq(&expand_lprss(&seq, n)));
+        return 0;
+    }
+    let h = lprss_to_hydra(&seq);
+    let mut out = OutputType::Bocf;
+    for (i, a) in args.iter().enumerate() {
+        if a == "--to" && i + 1 < args.len() {
+            out = parse_output_type(&args[i + 1]);
+            break;
+        }
+    }
+    match out {
+        OutputType::Hydra => println!("{}", format_hydra_psi(&normalize_hydra(&h))),
+        OutputType::Bms => print_bms(&hydra_to_bms(&h).unwrap()),
+        OutputType::Veblen => print_veblen(&hydra_to_bocf(&h), false),
+        _ => print_bocf(&hydra_to_bocf(&h), false),
+    }
+    0
+}
+
+fn cmd_hydra(args: &[String]) -> i32 {
+    if args.is_empty() {
+        eprintln!("Usage: analyzer-cli hydra <expr> [--expand <n>] [--to <fmt>]");
+        return 1;
+    }
+    let input = &args[0];
+    let h = match parse_hydra(input) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("Parse error: {}", e);
+            return 1;
+        }
+    };
+
+    if let Some(n) = flag_value(args, "--expand") {
+        let norm = normalize_hydra(&h);
+        match expand_hydra(&norm, n) {
+            Ok(e) => println!("{}", format_hydra_psi(&e)),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                return 1;
+            }
+        }
+        return 0;
+    }
+
+    let mut out = OutputType::All;
+    for (i, a) in args.iter().enumerate() {
+        if a == "--to" && i + 1 < args.len() {
+            out = parse_output_type(&args[i + 1]);
+            break;
+        }
+    }
+
+    let norm = normalize_hydra(&h);
+    match out {
+        OutputType::All => {
+            println!("PSS Hydra: {}", format_hydra_psi(&norm));
+            print_hydra_ordinal(&h);
+            let hprss = hydra_to_hprss_standard(&h);
+            if !hprss.is_empty() {
+                println!("HPrSS: {}", format_seq(&hprss));
+            }
+            let bms = hydra_to_bms(&norm);
+            match bms {
+                Ok(m) => {
+                    println!("BMS: {}", format_matrix(&m));
+                    let zero_y = bms_to_0y_sequence(&m);
+                    if !zero_y.is_empty() {
+                        println!("0-Y: {}", zero_y);
+                    }
+                }
+                Err(e) => println!("BMS: (error: {})", e),
+            }
+        }
+        OutputType::Hydra => println!("{}", format_hydra_psi(&norm)),
+        OutputType::Hprss => {
+            let hprss = hydra_to_hprss_standard(&h);
+            println!("{}", format_seq(&hprss));
+        }
+        OutputType::Bms => match hydra_to_bms(&norm) {
+            Ok(m) => println!("{}", format_matrix(&m)),
+            Err(e) => println!("(error: {})", e),
+        },
+        OutputType::Bocf => {
+            let ordinal = hydra_to_bocf(&h);
+            print_bocf(&ordinal, false);
+        }
+        OutputType::Veblen => {
+            let ordinal = hydra_to_bocf(&h);
+            print_veblen(&ordinal, false);
+        }
+        _ => {}
+    }
+    0
+}
+
+fn print_hydra_ordinal(h: &bms_core::hydra::Hydra) {
+    let ordinal = hydra_to_bocf(h);
+    print_bocf(&ordinal, false);
+    print_veblen(&ordinal, false);
+}
+
 fn cmd_fs(args: &[String]) -> i32 {
     let latex_mode = has_flag(args, "--latex");
     if args.len() < 2 {
@@ -515,6 +710,8 @@ fn print_usage() {
   analyzer-cli 0y <sequence> [--to <fmt>] [--expand <n>]\n\
   analyzer-cli 1y <sequence> --expand <n>\n\
   analyzer-cli wy <sequence> --expand <n>\n\
+  analyzer-cli hprss <sequence> [--to <fmt>] [--expand <n>]\n\
+  analyzer-cli hydra <expr> [--to <fmt>] [--expand <n>]\n\
   analyzer-cli fs <expr> <n>   Fundamental sequence of a BOCF expression\n\
 \n\
 Commands:\n\
@@ -523,10 +720,12 @@ Commands:\n\
   0y    Convert 0-Y sequence to BMS (or expand with --expand)\n\
   1y    Expand a 1-Y sequence\n\
   wy    Expand a ω-Y sequence\n\
+  hprss Expand or convert an HPrSS sequence\n\
+  hydra Expand or convert a PSS Hydra expression (p1(p2(0)))\n\
   fs    Compute the nth term of an ordinal's fundamental sequence\n\
 \n\
 Flags:\n\
-  --to <fmt>     Output a specific notation (bocf, bms, veblen, 0y, triangular)\n\
+  --to <fmt>     Output a specific notation (bocf, bms, veblen, 0y, triangular, hydra, hprss)\n\
   --expand <n>   Expand BMS matrix or compute FS of BOCF (n = step)\n\
   --triangular   Treat input matrix as triangular BMS (convert to standard before analysis)\n\
   --latex        Output LaTeX formatting for Veblen\n\
@@ -534,6 +733,8 @@ Flags:\n\
 Formats:\n\
   Matrix:  (0,0,0)(1,1,1)(2,2,0)\n\
   0-Y:     1,2,3,4\n\
+  HPrSS:   1,4,6,6\n\
+  PSS Hydra: p1(p2(0)+p2(0))\n\
   BOCF:    p(w)  (p=ψ, w=ω, W=Ω)"
     );
 }
@@ -564,6 +765,9 @@ fn main() {
         "0y" => cmd_0y(&cmd_args),
         "1y" => cmd_1y(&cmd_args),
         "wy" => cmd_wy(&cmd_args),
+        "hprss" => cmd_hprss(&cmd_args),
+        "lprss" => cmd_lprss(&cmd_args),
+        "hydra" => cmd_hydra(&cmd_args),
         "fs" => cmd_fs(&cmd_args),
         _ => {
             eprintln!("Unknown command: {}\n", cmd);

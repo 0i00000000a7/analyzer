@@ -3,6 +3,7 @@
 
 pub mod bms;
 pub mod expand;
+pub mod hydra;
 pub mod one_y;
 pub mod parser;
 pub mod term;

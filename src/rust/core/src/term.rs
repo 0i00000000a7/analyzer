@@ -352,7 +352,7 @@ pub fn standard_form(a: &Term) -> Term {
     )
 }
 
-fn is_finite_nat(t: &Term) -> bool {
+pub fn is_finite_nat(t: &Term) -> bool {
     match t {
         None => true,
         Some(n) => {

@@ -748,34 +748,6 @@ fn psi0_minus_one(xi: &Term) -> Term {
     t(zero(), xi.clone(), zero())
 }
 
-/// Ω·β.
-fn omega_times(beta: &Term) -> Term {
-    if is_zero(beta) {
-        return zero();
-    }
-    if is_ordinal_finite(beta) {
-        let n = length1(beta);
-        let mut result = zero();
-        for _ in 0..n {
-            result = add(&result, &t(one(), zero(), zero()));
-        }
-        return result;
-    }
-    let mut result = zero();
-    let mut curr = beta.clone();
-    while !is_zero(&curr) {
-        let head = first_term(&curr);
-        let hn = head.as_ref().unwrap();
-        if is_zero(&hn.a) {
-            result = add(&result, &t(one(), log(&head), zero()));
-        } else {
-            result = add(&result, &t(one(), add(&omega1(), &hn.b), zero()));
-        }
-        curr = curr.as_ref().unwrap().c.clone();
-    }
-    result
-}
-
 struct OmegaCnfTerm {
     exponent: Term,
     second: Term,
@@ -790,8 +762,15 @@ fn decompose_omega_cnf(alpha: &Term, terms: &mut Vec<OmegaCnfTerm>, tail: &mut T
         if !is_zero(&hn.a) {
             let (exp_t, second) = decompose_power(&head);
             if let Some(last) = terms.last_mut() {
-                if eq(&last.exponent, &exp_t) && eq(&last.second, &second) {
-                    last.count += 1;
+                if eq(&last.exponent, &exp_t) {
+                    // Same exponent: merge by accumulating total coefficient
+                    let mut total = zero();
+                    for _ in 0..last.count {
+                        total = add(&total, &last.second);
+                    }
+                    total = add(&total, &second);
+                    last.second = total;
+                    last.count = 1;
                 } else {
                     terms.push(OmegaCnfTerm {
                         exponent: exp_t,
@@ -899,7 +878,7 @@ pub fn compute_t(alpha: &Term) -> Term {
         }
     }
 
-    let omega_beta = omega_times(&beta);
+    let omega_beta = mul(&omega1(), &beta);
     add(&omega_beta, &delta)
 }
 
@@ -1121,15 +1100,19 @@ fn render_array(alpha: &Term, v_mode: bool, sugar: bool, is_position: bool) -> S
         }
         let mut coeff;
         if eq(&tm.second, &one()) || is_zero(&tm.second) {
-            coeff = tm.count.to_string();
+            coeff = if tm.count == 1 { "1".to_string() } else { tm.count.to_string() };
         } else {
-            coeff = render_veblen_coeff(&tm.second, v_mode, sugar);
-            if coeff.contains('+') {
-                coeff = format!("({})", coeff);
+            let mut coeff_term = zero();
+            for _ in 0..tm.count {
+                coeff_term = add(&coeff_term, &tm.second);
             }
+            coeff = render_veblen_coeff(&coeff_term, v_mode, sugar);
         }
         let pos = render_position(&tm.exponent, v_mode, sugar);
-        result += &format!("{}{{@}}{}", coeff, pos);
+        if coeff.starts_with('\\') && coeff[1..].chars().all(|c| c.is_ascii_alphabetic()) {
+            coeff += "{}";
+        }
+        result += &format!("{}@{}", coeff, pos);
         first = false;
     }
     if !is_zero(&tail) {
@@ -1137,10 +1120,10 @@ fn render_array(alpha: &Term, v_mode: bool, sugar: bool, is_position: bool) -> S
             result += ",";
         }
         let mut tcoeff = render_veblen_coeff(&tail, v_mode, sugar);
-        if tcoeff.contains('+') {
-            tcoeff = format!("({})", tcoeff);
+        if tcoeff.starts_with('\\') && tcoeff[1..].chars().all(|c| c.is_ascii_alphabetic()) {
+            tcoeff += "{}";
         }
-        result += &format!("{}{{@}}0", tcoeff);
+        result += &format!("{}@0", tcoeff);
     }
     result += ")";
     result
@@ -1250,19 +1233,21 @@ fn render_array_matrix(alpha: &Term, sugar: bool, is_position: bool) -> String {
     let mut top = String::new();
     let mut bottom = String::new();
     let mut first = true;
+
     for tm in &terms {
         if !first {
             top += "&";
             bottom += "&";
         }
-        let mut coeff;
+        let coeff;
         if eq(&tm.second, &one()) || is_zero(&tm.second) {
-            coeff = tm.count.to_string();
+            coeff = if tm.count == 1 { "1".to_string() } else { tm.count.to_string() };
         } else {
-            coeff = render_veblen_coeff_matrix(&tm.second, sugar);
-            if coeff.contains('+') {
-                coeff = format!("({})", coeff);
+            let mut coeff_term = zero();
+            for _ in 0..tm.count {
+                coeff_term = add(&coeff_term, &tm.second);
             }
+            coeff = render_veblen_coeff_matrix(&coeff_term, sugar);
         }
         top += &coeff;
         bottom += &render_position_matrix(&tm.exponent, sugar);
@@ -1273,10 +1258,7 @@ fn render_array_matrix(alpha: &Term, sugar: bool, is_position: bool) -> String {
             top += "&";
             bottom += "&";
         }
-        let mut tcoeff = render_veblen_coeff_matrix(&tail, sugar);
-        if tcoeff.contains('+') {
-            tcoeff = format!("({})", tcoeff);
-        }
+        let tcoeff = render_veblen_coeff_matrix(&tail, sugar);
         top += &tcoeff;
         bottom += "0";
     }

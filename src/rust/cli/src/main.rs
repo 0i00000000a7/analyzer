@@ -110,6 +110,9 @@ fn strip_latex(s: &str) -> String {
             while j < bytes.len() && bytes[j] == b'{' {
                 j += 1;
             }
+            if j < bytes.len() && bytes[j] == b'}' {
+                j += 1;
+            }
             i = j;
         } else {
             r.push(bytes[i] as char);

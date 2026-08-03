@@ -352,6 +352,144 @@ pub fn standard_form(a: &Term) -> Term {
     )
 }
 
+/// Like `merge_psi_addends`, but a ψ node is only absorbed into the argument
+/// of a node of the SAME subscript. Cross-subscript merges (which jump a
+/// level, e.g. ψ_0(ψ_1(ψ_2(0))) → ψ_0(ψ_2(0))) are never performed; those
+/// summands are instead handled by plain ordinal absorption.
+fn merge_psi_addends_no_jump(a: &Term, b: &Term, c: &Term) -> Term {
+    if is_zero(c) {
+        return t(a.clone(), b.clone(), zero());
+    }
+    let cn = c.as_ref().unwrap();
+    let a0 = t(a.clone(), zero(), zero());
+    if eq(&cn.a, a) && lt(b, &cn.b) && gt(c, &a0) {
+        let tn = truncate(&cn.b, &succ(&cn.a));
+        let fc = first_term(c);
+        let sub_part = sub(&fc, &t(cn.a.clone(), tn.clone(), zero()));
+        return merge_psi_addends_no_jump(a, &add(&tn, &sub_part), &cn.c);
+    }
+    merge_psi_addends_no_jump(a, &add(b, &first_term(c)), &cn.c)
+}
+
+/// Standard form for PSS-hydra-expressible terms that performs recursive
+/// standardization and ordinal-sum absorption, but no ψ-subscript "jumping"
+/// merges: only ψ_n(ψ_n(x)) → ψ_n(x) is applied, never ψ_n(ψ_m(x)) → ψ_n(x)
+/// for m ≠ n.
+pub fn standard_form_no_jump(a: &Term) -> Term {
+    if is_zero(a) {
+        return zero();
+    }
+    let node = a.as_ref().unwrap();
+    add(
+        &merge_psi_addends_no_jump(
+            &standard_form_no_jump(&node.a),
+            &zero(),
+            &standard_form_no_jump(&node.b),
+        ),
+        &standard_form_no_jump(&node.c),
+    )
+}
+
+/// Check whether `c` is in the closure set C(a, b) under the BOCF definition.
+/// Returns true iff c ∈ C(a, b).
+fn c_in_closure(c: &Term, a: &Term, b: &Term) -> bool {
+    let psi_a_0 = t(a.clone(), zero(), zero());
+    if lt(c, &psi_a_0) {
+        return true;
+    }
+    // c >= ψ_a(0)
+    match c {
+        None => false,
+        Some(n) => {
+            if !is_zero(&n.c) {
+                // c = c0 + c1
+                let c0 = first_term(c);
+                let c1 = n.c.clone();
+                c_in_closure(&c0, a, b) && c_in_closure(&c1, a, b)
+            } else {
+                // c = ψ_c0(c1)
+                c_in_closure(&n.a, a, b) && c_in_closure(&n.b, a, b) && lt(&n.b, b)
+            }
+        }
+    }
+}
+
+/// Check whether a BOCF term is in standard (normal) form.
+/// Returns true iff a ∈ T.
+pub fn is_bocf_standard(a: &Term) -> bool {
+    match a {
+        None => true,
+        Some(n) => {
+            if !is_zero(&n.c) {
+                // a = a0 + a1
+                let a0 = first_term(a);
+                let a1 = n.c.clone();
+                if !is_bocf_standard(&a0) || !is_bocf_standard(&a1) {
+                    return false;
+                }
+                match &a1 {
+                    None => false,
+                    Some(n1) => {
+                        if is_zero(&n1.c) {
+                            // a1 is a single term: check a0 >= a1
+                            !lt(&a0, &a1)
+                        } else {
+                            // a1 = a2 + a3: check a0 >= a2
+                            let a2 = first_term(&a1);
+                            !lt(&a0, &a2)
+                        }
+                    }
+                }
+            } else {
+                // a = ψ_a0(a1)
+                is_bocf_standard(&n.a) && is_bocf_standard(&n.b) && c_in_closure(&n.b, &n.a, &n.b)
+            }
+        }
+    }
+}
+
+/// Result of a BOCF standardness check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BocfStandardness {
+    /// Term is standard.
+    Standard = 0,
+    /// Term is not standard but standard_form can normalize it.
+    NonStandardButNormalizable = 1,
+    /// Term is not standard and even standard_form leaves it non-standard.
+    NonStandard = 2,
+}
+
+/// Check BOCF standardness with intermediate warning level.
+/// Returns `BocfStandardness` indicating how bad the non-standardness is.
+///
+/// A term that only fails in its sum structure (ordering/absorption) counts
+/// as normalizable: standard_form fixes it without touching any ψ argument.
+/// If standard_form would have to modify a ψ argument or subscript (e.g.
+/// ψ₀(ψ₀(Ω)) → ψ₀(Ω)), the term is treated as hard-to-normalize and the
+/// check reports `NonStandard`.
+pub fn check_bocf_standardness(a: &Term) -> BocfStandardness {
+    if is_bocf_standard(a) {
+        return BocfStandardness::Standard;
+    }
+    let sf = standard_form(a);
+    if is_bocf_standard(&sf) && sum_only_fix(a, &sf) {
+        BocfStandardness::NonStandardButNormalizable
+    } else {
+        BocfStandardness::NonStandard
+    }
+}
+
+/// True iff `sf` is obtained from `raw` by only absorbing/reordering
+/// top-level summands: every top-level ψ of `sf` must already appear as a
+/// top-level ψ of `raw`.
+fn sum_only_fix(raw: &Term, sf: &Term) -> bool {
+    let raw_sums = every_terms(raw);
+    let sf_sums = every_terms(sf);
+    sf_sums
+        .iter()
+        .all(|s| raw_sums.iter().any(|r| eq(s, r)))
+}
+
 pub fn is_finite_nat(t: &Term) -> bool {
     match t {
         None => true,
@@ -902,7 +1040,7 @@ fn render_array_body(alpha: &Term, sugar: bool, is_position: bool) -> String {
         return full[8..full.len() - 1].to_string();
     }
     if full.len() > 9 && full.starts_with("\\omega^{") && full.ends_with('}') {
-        return full[9..full.len() - 1].to_string();
+        return full[8..full.len() - 1].to_string();
     }
     full
 }
@@ -940,9 +1078,14 @@ fn render_position_matrix(beta: &Term, sugar: bool) -> String {
     }
     if has_omega_power_deep(beta) {
         let m = render_array_matrix(beta, sugar, true);
-        if m.contains('&') {
-            return format!("({})", m);
-        }
+        // Ω-power positions (ψ_a with a ≥ 1) are raw array tuples: drop the
+        // \varphi prefix. ψ_0-values (e.g. φ(1,0,0,0)) keep it.
+        let is_omega_power = beta.as_ref().map(|n| !is_zero(&n.a)).unwrap_or(false);
+        let m = if is_omega_power {
+            m.strip_prefix("\\varphi").unwrap_or(&m).to_string()
+        } else {
+            m
+        };
         return m;
     }
     render_term(beta)
@@ -1010,7 +1153,7 @@ fn render_array(alpha: &Term, v_mode: bool, sugar: bool, is_position: bool) -> S
                 }
                 return format!("\\omega^{{{}}}", coeff_str);
             }
-            if is_position && !sugar {
+            if is_position {
                 return format!("\\varphi({})", coeff_str);
             }
             return coeff_str;
@@ -1098,7 +1241,7 @@ fn render_array(alpha: &Term, v_mode: bool, sugar: bool, is_position: bool) -> S
         if !first {
             result += ",";
         }
-        let mut coeff;
+        let coeff;
         if eq(&tm.second, &one()) || is_zero(&tm.second) {
             coeff = if tm.count == 1 { "1".to_string() } else { tm.count.to_string() };
         } else {
@@ -1109,21 +1252,15 @@ fn render_array(alpha: &Term, v_mode: bool, sugar: bool, is_position: bool) -> S
             coeff = render_veblen_coeff(&coeff_term, v_mode, sugar);
         }
         let pos = render_position(&tm.exponent, v_mode, sugar);
-        if coeff.starts_with('\\') && coeff[1..].chars().all(|c| c.is_ascii_alphabetic()) {
-            coeff += "{}";
-        }
-        result += &format!("{}@{}", coeff, pos);
+        result += &format!("{}{{@}}{}", coeff, pos);
         first = false;
     }
     if !is_zero(&tail) {
         if !first {
             result += ",";
         }
-        let mut tcoeff = render_veblen_coeff(&tail, v_mode, sugar);
-        if tcoeff.starts_with('\\') && tcoeff[1..].chars().all(|c| c.is_ascii_alphabetic()) {
-            tcoeff += "{}";
-        }
-        result += &format!("{}@0", tcoeff);
+        let tcoeff = render_veblen_coeff(&tail, v_mode, sugar);
+        result += &format!("{}{{@}}0", tcoeff);
     }
     result += ")";
     result
@@ -1401,6 +1538,81 @@ pub fn term_to_veblen_matrix_plain(q: &Term) -> String {
 
 pub fn term_to_string(_latex: bool, q: &Term) -> String {
     render_term(q)
+}
+
+/// Render a Term in raw ψ_a(b)+c form without Ω-power decomposition.
+/// Simplifications: ψ_0(1) = ω, ψ_a(0) = Ω_a, finite ordinals as numbers.
+/// Everything else stays as ψ_a(b)+c.
+pub fn term_to_psi_simple(q: &Term) -> String {
+    term_to_psi_simple_cached(q, &mut HashMap::new())
+}
+
+fn term_to_psi_simple_cached(q: &Term, cache: &mut HashMap<usize, String>) -> String {
+    if is_zero(q) {
+        return "0".to_string();
+    }
+    if is_ordinal_finite(q) {
+        return length1(q).to_string();
+    }
+    let key = q.as_ref().map(|n| n.id).unwrap_or(0);
+    if let Some(s) = cache.get(&key) {
+        return s.clone();
+    }
+
+    let (a_part, b_part) = separate(q, &first_term(q));
+    let a0 = a_part.as_ref().unwrap().a.clone();
+    let a1 = a_part.as_ref().unwrap().b.clone();
+
+    // ψ_0(1) = ω
+    if is_zero(&a0) && eq(&a1, &one()) {
+        cache.insert(key, "\\omega".to_string());
+        return "\\omega".to_string();
+    }
+
+    // ψ_a(0) = Ω_a
+    if is_zero(&a1) {
+        let s = omega_str(&a0);
+        if !is_zero(&b_part) {
+            let result = format!("{}+{}", s, term_to_psi_simple_cached(&b_part, cache));
+            cache.insert(key, result.clone());
+            return result;
+        }
+        cache.insert(key, s.clone());
+        return s;
+    }
+
+    // ψ_0(b) = ψ(b)
+    let m = if is_zero(&a0) {
+        format!(
+            "\\psi\\left({}\\right)",
+            term_to_psi_simple_cached(&a1, cache)
+        )
+    } else {
+        format!(
+            "\\psi_{{{}}}\\left({}\\right)",
+            term_to_psi_simple_cached(&a0, cache),
+            term_to_psi_simple_cached(&a1, cache)
+        )
+    };
+
+    let len = length1(&a_part);
+    if len > 1 {
+        let result = format!("{}{}", m, len);
+        if !is_zero(&b_part) {
+            let result = format!("{}+{}", result, term_to_psi_simple_cached(&b_part, cache));
+            cache.insert(key, result.clone());
+            return result;
+        }
+        cache.insert(key, result.clone());
+        return result;
+    }
+    if !is_zero(&b_part) {
+        let result = format!("{}+{}", m, term_to_psi_simple_cached(&b_part, cache));
+        cache.insert(key, result.clone());
+        return result;
+    }
+    cache.insert(key, m.clone());
+    m
 }
 
 // Debug wrappers

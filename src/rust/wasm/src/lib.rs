@@ -1,10 +1,10 @@
 //! wasm-bindgen exports for the BMS analyzer.
 //! Mirrors the 24 exports from src/cpp/bindings.cpp.
 
-use bms_core::bms::{bms_to_bocf, is_eq_ebo, is_gte_ebo};
+use bms_core::bms::{bms_to_bocf, is_eq_ebo, is_gte_ebo, is_standard_matrix, is_standard_triangular_matrix};
 use bms_core::expand::{expand_bms, matrix_lex_order};
 use bms_core::one_y::build_1y_mountain_with_rows;
-use bms_core::parser::{bocf_to_bms, eval_ast, parse_bocf};
+use bms_core::parser::{bocf_to_bms, eval_ast, eval_raw_ast, parse_bocf};
 use bms_core::term::*;
 use bms_core::triangular::{bms_to_triangular, triangular_to_bms};
 use bms_core::wy::{
@@ -164,29 +164,42 @@ pub fn bms_analyze(matrix: JsValue) -> JsValue {
     let m = js_to_matrix(&matrix);
     let obj = js_sys::Object::new();
     let gte_ebo = is_gte_ebo(&m);
+    let is_standard = is_standard_matrix(&m);
     js_sys::Reflect::set(&obj, &JsValue::from("gteEBO"), &JsValue::from(gte_ebo)).ok();
+    js_sys::Reflect::set(&obj, &JsValue::from("isStandard"), &JsValue::from(is_standard)).ok();
     if gte_ebo {
         let lb = if is_eq_ebo(&m) { "\\psi(I)" } else { ">\\psi(I)" };
         js_sys::Reflect::set(&obj, &JsValue::from("ordinal"), &JsValue::from(lb)).ok();
+        js_sys::Reflect::set(&obj, &JsValue::from("psiSimple"), &JsValue::from(lb)).ok();
     } else {
         let ordinal = bms_to_bocf(&m);
         let s = term_to_string(false, &ordinal);
+        let psi_simple = term_to_psi_simple(&ordinal);
         let veblen = term_to_veblen(&ordinal);
         let veblen_plain = term_to_veblen_plain(&ordinal);
         let veblen_matrix = term_to_veblen_matrix(&ordinal);
         let veblen_matrix_plain = term_to_veblen_matrix_plain(&ordinal);
-        let is_standard = true;
 
         js_sys::Reflect::set(&obj, &JsValue::from("ordinal"), &JsValue::from(&s)).ok();
         js_sys::Reflect::set(&obj, &JsValue::from("ordinalJS"), &term_to_js(&ordinal)).ok();
+        js_sys::Reflect::set(&obj, &JsValue::from("psiSimple"), &JsValue::from(&psi_simple)).ok();
         js_sys::Reflect::set(&obj, &JsValue::from("veblen"), &JsValue::from(&veblen)).ok();
         js_sys::Reflect::set(&obj, &JsValue::from("veblenPlain"), &JsValue::from(&veblen_plain)).ok();
         js_sys::Reflect::set(&obj, &JsValue::from("veblenMatrix"), &JsValue::from(&veblen_matrix)).ok();
         js_sys::Reflect::set(&obj, &JsValue::from("veblenMatrixPlain"), &JsValue::from(&veblen_matrix_plain)).ok();
         js_sys::Reflect::set(&obj, &JsValue::from("nsForm"), &JsValue::from(&s)).ok();
-        js_sys::Reflect::set(&obj, &JsValue::from("isStandard"), &JsValue::from(is_standard)).ok();
     }
     obj.into()
+}
+
+#[wasm_bindgen(js_name = "bmsIsStandard")]
+pub fn bms_is_standard_js(matrix: JsValue) -> bool {
+    is_standard_matrix(&js_to_matrix(&matrix))
+}
+
+#[wasm_bindgen(js_name = "bmsTriangularIsStandard")]
+pub fn bms_triangular_is_standard_js(matrix: JsValue) -> bool {
+    is_standard_triangular_matrix(&js_to_matrix(&matrix))
 }
 
 #[wasm_bindgen(js_name = "matrixLexOrder")]
@@ -239,6 +252,7 @@ pub fn parse_and_eval_bocf_js(input: &str) -> JsValue {
                 js_sys::Reflect::set(&obj, &JsValue::from("ast"), &JsValue::from("")).ok();
                 js_sys::Reflect::set(&obj, &JsValue::from("ordinal"), &JsValue::from(term_to_string(false, &val))).ok();
                 js_sys::Reflect::set(&obj, &JsValue::from("ordinalJS"), &term_to_js(&val)).ok();
+                js_sys::Reflect::set(&obj, &JsValue::from("psiSimple"), &JsValue::from(term_to_psi_simple(&val))).ok();
                 js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from("")).ok();
                 // BOCF → standard form → PSS Hydra (补层'd) and HPrSS (LP of unfilled)
                 if let Ok(unfilled) = bms_core::hydra::term_to_hydra(&standard_form(&val)) {
@@ -270,6 +284,15 @@ pub fn parse_and_eval_bocf_js(input: &str) -> JsValue {
     obj.into()
 }
 
+/// Check BOCF standardness of a raw input expression.
+/// Returns 0 = standard, 1 = non-standard but normalizable, 2 = non-standard.
+#[wasm_bindgen(js_name = "bocfIsStandard")]
+pub fn bocf_is_standard_js(input: &str) -> Result<i32, JsValue> {
+    let ast = parse_bocf(input).map_err(|e| JsValue::from(&js_sys::Error::new(&e)))?;
+    let raw = eval_raw_ast(&ast).map_err(|e| JsValue::from(&js_sys::Error::new(&e)))?;
+    Ok(bms_core::term::check_bocf_standardness(&raw) as i32)
+}
+
 #[wasm_bindgen(js_name = "expandBMS")]
 pub fn expand_bms_js(matrix: JsValue, fs: i32) -> JsValue {
     matrix_to_js(&expand_bms(&js_to_matrix(&matrix), fs))
@@ -294,6 +317,11 @@ pub fn term_to_veblen_js(term: JsValue) -> JsValue {
     js_sys::Reflect::set(&obj, &JsValue::from("veblenMatrix"), &JsValue::from(term_to_veblen_matrix(&t))).ok();
     js_sys::Reflect::set(&obj, &JsValue::from("veblenMatrixPlain"), &JsValue::from(term_to_veblen_matrix_plain(&t))).ok();
     obj.into()
+}
+
+#[wasm_bindgen(js_name = "termToPsiSimple")]
+pub fn term_to_psi_simple_js(term: JsValue) -> String {
+    term_to_psi_simple(&js_to_term(&term))
 }
 
 #[wasm_bindgen(js_name = "bocfToBMS")]
@@ -426,6 +454,11 @@ pub fn is_legal_upms_matrix_js(matrix: JsValue) -> bool {
     bms_core::upms::is_legal_upms_matrix(&js_to_matrix_no_pad(&matrix))
 }
 
+#[wasm_bindgen(js_name = "upmsIsStandard")]
+pub fn upms_is_standard_js(matrix: JsValue) -> bool {
+    bms_core::upms::is_standard_upms_matrix(&js_to_matrix_no_pad(&matrix))
+}
+
 #[wasm_bindgen(js_name = "upmsToBMS")]
 pub fn upms_to_bms_js(matrix: JsValue) -> Result<JsValue, JsValue> {
     match bms_core::upms::upms_to_bms(&js_to_matrix_no_pad(&matrix)) {
@@ -466,17 +499,17 @@ fn hydra_analyze_obj(input: &str) -> JsValue {
             js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from(&e)).ok();
         }
         Ok(h) => {
-            fill_hydra_analyze_obj(&obj, &h);
+            let display = bms_core::hydra::normalize_hydra(&h);
+            fill_hydra_analyze_obj(&obj, &h, &display);
         }
     }
     obj.into()
 }
 
-fn fill_hydra_analyze_obj(obj: &js_sys::Object, h: &bms_core::hydra::Hydra) {
-    let norm = bms_core::hydra::normalize_hydra(h);
-    let hydra_str = bms_core::hydra::format_hydra_psi(&norm);
+fn fill_hydra_analyze_obj(obj: &js_sys::Object, h: &bms_core::hydra::Hydra, display: &bms_core::hydra::Hydra) {
+    let hydra_str = bms_core::hydra::format_hydra_psi(display);
     js_sys::Reflect::set(obj, &JsValue::from("hydra"), &JsValue::from(&hydra_str)).ok();
-    js_sys::Reflect::set(obj, &JsValue::from("legal"), &JsValue::from(bms_core::hydra::is_legal_hydra(&norm))).ok();
+    js_sys::Reflect::set(obj, &JsValue::from("legal"), &JsValue::from(bms_core::hydra::is_legal_hydra(display))).ok();
     let ordinal = bms_core::hydra::hydra_to_bocf(h);
     let s = term_to_string(false, &ordinal);
     js_sys::Reflect::set(obj, &JsValue::from("ordinal"), &JsValue::from(&s)).ok();
@@ -485,7 +518,7 @@ fn fill_hydra_analyze_obj(obj: &js_sys::Object, h: &bms_core::hydra::Hydra) {
     js_sys::Reflect::set(obj, &JsValue::from("veblenPlain"), &JsValue::from(term_to_veblen_plain(&ordinal))).ok();
     js_sys::Reflect::set(obj, &JsValue::from("veblenMatrix"), &JsValue::from(term_to_veblen_matrix(&ordinal))).ok();
     js_sys::Reflect::set(obj, &JsValue::from("veblenMatrixPlain"), &JsValue::from(term_to_veblen_matrix_plain(&ordinal))).ok();
-    let bms = match bms_core::hydra::hydra_to_bms(&norm) {
+    let bms = match bms_core::hydra::hydra_to_bms(display) {
         Ok(m) => m,
         Err(_) => Vec::new(),
     };
@@ -523,7 +556,8 @@ pub fn hprss_analyze_js(seq: JsValue) -> JsValue {
         return obj.into();
     }
     let h = bms_core::hydra::hprss_to_hydra(&v);
-    fill_hydra_analyze_obj(&obj, &h);
+    let display = bms_core::hydra::standardize_hydra(&h);
+    fill_hydra_analyze_obj(&obj, &h, &display);
     obj.into()
 }
 
@@ -536,7 +570,8 @@ pub fn lprss_analyze_js(seq: JsValue) -> JsValue {
         return obj.into();
     }
     let h = bms_core::hydra::lprss_to_hydra(&v);
-    fill_hydra_analyze_obj(&obj, &h);
+    let display = bms_core::hydra::normalize_hydra(&h);
+    fill_hydra_analyze_obj(&obj, &h, &display);
     obj.into()
 }
 
@@ -560,6 +595,40 @@ pub fn build_lprss_mountain_js(seq: JsValue) -> JsValue {
     mountain_to_js(&bms_core::hydra::build_lprss_mountain(&js_seq_to_vec(&seq)))
 }
 
+#[wasm_bindgen(js_name = "zeroYIsStandard")]
+pub fn zero_y_is_standard_js(seq: JsValue) -> bool {
+    bms_core::seq_std::zero_y_is_standard(&js_seq_to_vec(&seq))
+}
+
+#[wasm_bindgen(js_name = "oneYIsStandard")]
+pub fn one_y_is_standard_js(seq: JsValue) -> bool {
+    bms_core::seq_std::one_y_is_standard(&js_seq_to_vec(&seq))
+}
+
+#[wasm_bindgen(js_name = "wyIsStandard")]
+pub fn wy_is_standard_js(seq: JsValue) -> bool {
+    bms_core::seq_std::wy_is_standard(&js_seq_to_vec(&seq))
+}
+
+#[wasm_bindgen(js_name = "hprssIsStandard")]
+pub fn hprss_is_standard_js(seq: JsValue) -> bool {
+    bms_core::seq_std::hprss_is_standard(&js_seq_to_vec(&seq))
+}
+
+#[wasm_bindgen(js_name = "lprssIsStandard")]
+pub fn lprss_is_standard_js(seq: JsValue) -> bool {
+    bms_core::seq_std::lprss_is_standard(&js_seq_to_vec(&seq))
+}
+
+/// PSS hydra standardness: 0 = standard, 1 = not standard but standardizeable
+/// (warn), 2 = not standard even after standardization (block).
+#[wasm_bindgen(js_name = "hydraIsStandard")]
+pub fn hydra_is_standard_js(input: &str) -> Result<i32, JsValue> {
+    let h = bms_core::hydra::parse_hydra(input)
+        .map_err(|e| JsValue::from(&js_sys::Error::new(&e)))?;
+    Ok(bms_core::hydra::check_hydra_standardness(&h) as i32)
+}
+
 #[wasm_bindgen(js_name = "expandHydra")]
 pub fn expand_hydra_js(input: &str, n: i32) -> Result<String, JsValue> {
     let h = bms_core::hydra::parse_hydra(input)
@@ -572,7 +641,7 @@ pub fn expand_hydra_js(input: &str, n: i32) -> Result<String, JsValue> {
 
 #[wasm_bindgen(js_name = "hprssToHydra")]
 pub fn hprss_to_hydra_js(seq: JsValue) -> String {
-    bms_core::hydra::format_hydra_psi(&bms_core::hydra::hprss_to_hydra(&js_seq_to_vec(&seq)))
+    bms_core::hydra::format_hydra_psi(&bms_core::hydra::standardize_hydra(&bms_core::hydra::hprss_to_hydra(&js_seq_to_vec(&seq))))
 }
 
 #[wasm_bindgen(js_name = "hydraToHPRSS")]

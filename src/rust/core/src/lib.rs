@@ -8,6 +8,7 @@ pub mod one_y;
 pub mod parser;
 pub mod term;
 pub mod triangular;
+pub mod seq_std;
 pub mod upms;
 pub mod wy;
 pub mod y_dbms;

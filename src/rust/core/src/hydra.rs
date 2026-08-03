@@ -104,7 +104,14 @@ fn parse_hydra_expr(s: &[char], pos: &mut usize, out: &mut Vec<(i64, Hydra)>) ->
             if *pos < s.len() && s[*pos] == '_' {
                 *pos += 1;
             }
-            parse_num(s, pos)?
+            if *pos < s.len() && s[*pos] == '{' {
+                *pos += 1;
+            }
+            let num = parse_num(s, pos)?;
+            if *pos < s.len() && s[*pos] == '}' {
+                *pos += 1;
+            }
+            num
         } else {
             return Err(format!("Unexpected character '{}'", c));
         };
@@ -166,7 +173,7 @@ pub fn format_hydra_psi(h: &Hydra) -> String {
     }
     let mut parts = Vec::new();
     for (n, arg) in &h.0 {
-        parts.push(format!("ψ^H_{}({})", n, format_hydra_psi(arg)));
+        parts.push(format!("ψ^H_{{{}}}({})", n, format_hydra_psi(arg)));
     }
     parts.join("+")
 }
@@ -328,7 +335,7 @@ pub fn hydra_to_bocf(h: &Hydra) -> Term {
     standard_form(&hydra_to_term(h))
 }
 
-/// Convenience: BOCF term → standard hydra form (standard_form + 补层).
+/// Convenience: BOCF term → standard hydra form (standard_form + layer-filling).
 /// Err if above hydra range.
 pub fn bocf_to_hydra(t: &Term) -> Result<Hydra, String> {
     Ok(fill_layers(&term_to_hydra(&standard_form(t))?))
@@ -338,10 +345,46 @@ pub fn bocf_to_hydra(t: &Term) -> Result<Hydra, String> {
 // PSS Hydra ↔ BMS
 // ════════════════════════════════════════════════════════════════
 
-/// Standard BMS of a hydra: hydra → standard-form BOCF → full BOCF→BMS
-/// search algorithm. The direct structural embedding is not always standard.
+/// BMS of a hydra by direct structural embedding. Reading the hydra's nodes
+/// left to right, each ψ^H_{a_i} becomes the column (b_i, a_i-1) where b_i is
+/// the net bracket depth of its opening paren (the PSS Hydra ↔ 2-row BMS
+/// translation). Because the input is a standard PSS hydra, this embedding is
+/// exactly the correct BMS (no BOCF round-trip is needed).
 pub fn hydra_to_bms(h: &Hydra) -> Result<Matrix, String> {
-    crate::parser::term_to_bms(&hydra_to_bocf(h), &mut |_| {})
+    let mut out = Vec::new();
+    fn go(h: &Hydra, depth: i32, out: &mut Matrix) {
+        for (n, arg) in &h.0 {
+            out.push(vec![depth, (n - 1) as i32]);
+            go(arg, depth + 1, out);
+        }
+    }
+    go(h, 0, &mut out);
+    Ok(out)
+}
+
+/// Whether a PSS hydra is standard: embed it into BMS (structural embedding)
+/// and run the BMS standardness test.
+pub fn is_hydra_standard(h: &Hydra) -> bool {
+    match hydra_to_bms(h) {
+        Ok(m) => crate::bms::is_standard_matrix(&m),
+        Err(_) => false,
+    }
+}
+
+/// PSS hydra standardness with an intermediate warning level, mirroring BOCF.
+/// A hydra that is not standard but becomes standard after `standardize_hydra`
+/// counts as `NonStandardButNormalizable` (warn only); one that stays
+/// non-standard even after standardization is `NonStandard` (block).
+pub fn check_hydra_standardness(h: &Hydra) -> BocfStandardness {
+    if is_hydra_standard(h) {
+        return BocfStandardness::Standard;
+    }
+    let std = standardize_hydra(h);
+    if is_hydra_standard(&std) {
+        BocfStandardness::NonStandardButNormalizable
+    } else {
+        BocfStandardness::NonStandard
+    }
 }
 
 /// 2-row BMS → hydra. First-row values are the nesting depth; each (0,k)
@@ -387,7 +430,7 @@ fn bms_to_hydra_aux(m: &Matrix) -> Result<Hydra, String> {
 }
 
 // ════════════════════════════════════════════════════════════════
-// Normalization (补层)
+// Normalization (layer-filling)
 // ════════════════════════════════════════════════════════════════
 
 /// Level of a hydra sum's top-level summands (max subscript); 0 for zero.
@@ -439,6 +482,23 @@ pub fn normalize_hydra(h: &Hydra) -> Hydra {
     match term_to_hydra(&hydra_to_bocf(h)) {
         Ok(t) => fill_layers(&t),
         Err(_) => fill_layers(h),
+    }
+}
+
+/// Standardize a PSS hydra without the BOCF ψ-subscript "jumping" collapses.
+///
+/// The BOCF `standard_form` absorbs a ψ node into the argument of ANY outer
+/// node (`merge_psi_addends`), which collapses ψ_0(ψ_1(ψ_2(0))) → ψ_0(ψ_2(0))
+/// and other cross-subscript jumps — wrong for the PSS hydra display. This
+/// hydra-specific version instead: (1) `fill_layers` first to fill missing
+/// intermediate layers, then (2) applies the original standard logic
+/// (recursive standardization + ordinal-sum absorption) but only ever merges
+/// a node into a node of the SAME subscript (ψ_n(ψ_n(x)) → ψ_n(x)).
+pub fn standardize_hydra(h: &Hydra) -> Hydra {
+    let filled = fill_layers(h);
+    match term_to_hydra(&standard_form_no_jump(&hydra_to_term(&filled))) {
+        Ok(t) => fill_layers(&t),
+        Err(_) => filled,
     }
 }
 
@@ -533,7 +593,7 @@ pub fn hydra_to_hprss(h: &Hydra) -> Vec<i32> {
 }
 
 /// Standard HPrSS of a hydra: hydra → BOCF standard form → back to the
-/// unfilled hydra → LP. Applying 补层 before LP would give the 0-Y sequence
+/// unfilled hydra → LP. Applying layer-filling before LP would give the 0-Y sequence
 /// instead of the HPrSS one (p1(p3(0)) → HPrSS (1,4) vs 0-Y (1,3,6)).
 pub fn hydra_to_hprss_standard(h: &Hydra) -> Vec<i32> {
     match term_to_hydra(&hydra_to_bocf(h)) {
@@ -830,7 +890,7 @@ mod tests {
         assert_eq!(h("ψ^H_1(p1(0))"), h("p1(p1(0))"));
         // ψ format round trips through the parser
         assert_eq!(h("ψ^H_1(ψ^H_3(ψ^H_3(0)+ψ^H_2(0))+ψ^H_2(ψ^H_2(ψ^H_2(0))))"), h("p1(p3(p3(0)+p2(0))+p2(p2(p2(0))))"));
-        assert_eq!(format_hydra_psi(&h("p1(p2(0)+p1(0))")), "ψ^H_1(ψ^H_2(0)+ψ^H_1(0))");
+        assert_eq!(format_hydra_psi(&h("p1(p2(0)+p1(0))")), "ψ^H_{1}(ψ^H_{2}(0)+ψ^H_{1}(0))");
         assert_eq!(format_hydra_psi(&h("0")), "0");
         assert_eq!(fmt(&h("p2(0)+p1(p2(0))")), "p2(0)+p1(p2(0))");
         assert_eq!(fmt(&h("p1(p2(0)+p2(0))")), "p1(p2(0)+p2(0))");
@@ -919,7 +979,7 @@ mod tests {
     #[test]
     fn hydra_to_hprss_standard_test() {
         // BHO: unfilled p1(p3(0)) gives the standard HPrSS (1,4); the LP of
-        // the 补层'd p1(p2(p3(0))) is the 0-Y sequence (1,3,6) instead
+        // the layer-filling'd p1(p2(p3(0))) is the 0-Y sequence (1,3,6) instead
         assert_eq!(hydra_to_hprss_standard(&h("p1(p3(0))")), vec![1, 4]);
         assert_eq!(hydra_to_hprss(&h("p1(p2(p3(0)))")), vec![1, 3, 6]);
         // already-standard hydras round trip through the standard path
@@ -1052,7 +1112,7 @@ mod tests {
         // ψ^H_1(ψ^H_2(0)) ↔ ψ_0(Ω) = ε_0
         let tm = hydra_to_term(&h("p1(p2(0))"));
         assert!(eq(&tm, &epsilon0()));
-        // ψ_0(ψ_2(0)) = BHO ↔ p1(p2(p3(0))) (standard form after 补层)
+        // ψ_0(ψ_2(0)) = BHO ↔ p1(p2(p3(0))) (standard form after layer-filling)
         assert_eq!(fmt(&bocf_to_hydra(&bho()).unwrap()), "p1(p2(p3(0)))");
         // round trip: hydra → term → standard → hydra is legal and idempotent
         let original = h("p1(p3(p3(0)+p2(0))+p2(p2(p2(0))))");
@@ -1094,14 +1154,14 @@ mod tests {
 
     #[test]
     fn normalize_hprss_pipeline() {
-        // hprss → hydra → standard form → 补层
+        // hprss → hydra → standard form → layer-filling
         let raw = hprss_to_hydra(&[1, 4, 7, 6, 3, 5, 7]);
         assert_eq!(fmt(&raw), "p1(p3(p3(0)+p2(0))+p2(p2(p2(0))))");
         let norm = normalize_hydra(&raw);
         // levels of p1's argument are 3 and 2 → mixed case: wrap only the p3 summand
         assert_eq!(fmt(&norm), "p1(p2(p3(p3(0)+p2(0)))+p2(p2(p2(0))))");
         assert!(is_legal_hydra(&norm));
-        // BHO from BOCF standard form ψ_0(Ω_2) needs 补层
+        // BHO from BOCF standard form ψ_0(Ω_2) needs layer-filling
         let norm_bho = normalize_hydra(&h("p1(p3(0))"));
         assert_eq!(fmt(&norm_bho), "p1(p2(p3(0)))");
         assert!(is_legal_hydra(&norm_bho));
@@ -1109,19 +1169,19 @@ mod tests {
 
     #[test]
     fn bms_round_trip() {
-        // ψ^H_1(ψ^H_2(0)) ↔ (0,0,0)(1,1,0)
-        assert_eq!(hydra_to_bms(&h("p1(p2(0))")).unwrap(), vec![vec![0, 0, 0], vec![1, 1, 0]]);
-        // (0,0,0)(1,1,0)(2,1,0)(1,1,0) ↔ p1(p2(p2(0))+p2(0))
-        let m = vec![vec![0, 0, 0], vec![1, 1, 0], vec![2, 1, 0], vec![1, 1, 0]];
+        // ψ^H_1(ψ^H_2(0)) ↔ (0,0)(1,1)
+        assert_eq!(hydra_to_bms(&h("p1(p2(0))")).unwrap(), vec![vec![0, 0], vec![1, 1]]);
+        // (0,0)(1,1)(2,1)(1,1) ↔ p1(p2(p2(0))+p2(0))
+        let m = vec![vec![0, 0], vec![1, 1], vec![2, 1], vec![1, 1]];
         assert_eq!(fmt(&bms_to_hydra(&m).unwrap()), "p1(p2(p2(0))+p2(0))");
         // round trip
         let h2 = bms_to_hydra(&m).unwrap();
         assert_eq!(hydra_to_bms(&h2).unwrap(), m);
-        // single column (0,0,0) = 1
-        assert_eq!(fmt(&bms_to_hydra(&vec![vec![0, 0, 0]]).unwrap()), "p1(0)");
-        // two (0,0,0) columns = 2
+        // single column (0,0) = 1
+        assert_eq!(fmt(&bms_to_hydra(&vec![vec![0, 0]]).unwrap()), "p1(0)");
+        // two (0,0) columns = 2
         assert_eq!(
-            fmt(&bms_to_hydra(&vec![vec![0, 0, 0], vec![0, 0, 0]]).unwrap()),
+            fmt(&bms_to_hydra(&vec![vec![0, 0], vec![0, 0]]).unwrap()),
             "p1(0)+p1(0)"
         );
         // invalid: 1-row
@@ -1130,10 +1190,10 @@ mod tests {
 
     #[test]
     fn hprss_to_bms_conv() {
-        assert_eq!(hprss_to_bms(&[1]).unwrap(), vec![vec![0, 0, 0]]);
-        // (1,2) ↔ p1(p1(0)) ↔ (0,0,0)(1,0,0)
-        assert_eq!(hprss_to_bms(&[1, 2]).unwrap(), vec![vec![0, 0, 0], vec![1, 0, 0]]);
-        // (1,2,3) ↔ p1(p1(p1(0))) ↔ (0,0,0)(1,0,0)(2,0,0)
-        assert_eq!(hprss_to_bms(&[1, 2, 3]).unwrap(), vec![vec![0, 0, 0], vec![1, 0, 0], vec![2, 0, 0]]);
+        assert_eq!(hprss_to_bms(&[1]).unwrap(), vec![vec![0, 0]]);
+        // (1,2) ↔ p1(p1(0)) ↔ (0,0)(1,0)
+        assert_eq!(hprss_to_bms(&[1, 2]).unwrap(), vec![vec![0, 0], vec![1, 0]]);
+        // (1,2,3) ↔ p1(p1(p1(0))) ↔ (0,0)(1,0)(2,0)
+        assert_eq!(hprss_to_bms(&[1, 2, 3]).unwrap(), vec![vec![0, 0], vec![1, 0], vec![2, 0]]);
     }
 }

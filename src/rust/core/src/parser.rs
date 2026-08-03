@@ -432,6 +432,72 @@ pub fn eval_ast(ast: &Ast) -> Result<Term, String> {
     eval_node(ast)
 }
 
+/// Un-normalized ordinal addition: `a + b` keeping the raw chain structure.
+fn append_sum(a: &Term, b: &Term) -> Term {
+    if is_zero(a) {
+        return b.clone();
+    }
+    if is_zero(b) {
+        return a.clone();
+    }
+    match a {
+        None => b.clone(),
+        Some(n) => {
+            if is_zero(&n.c) {
+                t(n.a.clone(), n.b.clone(), b.clone())
+            } else {
+                t(n.a.clone(), n.b.clone(), append_sum(&n.c, b))
+            }
+        }
+    }
+}
+
+/// Evaluate an AST to a term without normalizing sums.
+/// Used by the standardness check so that inputs like "1+ω" are seen in
+/// their raw (non-standard) sum structure rather than pre-collapsed to ω.
+pub fn eval_raw_ast(ast: &Ast) -> Result<Term, String> {
+    match ast {
+        Ast::Num(n) => {
+            let mut r = zero();
+            for _ in 0..*n {
+                r = add(&r, &one());
+            }
+            Ok(r)
+        }
+        Ast::W => Ok(omega()),
+        Ast::Omega(sub) => match sub {
+            None => Ok(omega1()),
+            Some(s) => {
+                let sub = eval_raw_ast(s)?;
+                Ok(t(sub, zero(), zero()))
+            }
+        },
+        Ast::Psi(sub, arg) => {
+            let sub_term = match sub {
+                Some(s) => eval_raw_ast(s)?,
+                None => zero(),
+            };
+            let arg_term = eval_raw_ast(arg)?;
+            Ok(t(sub_term, arg_term, zero()))
+        }
+        Ast::Add(l, r) => {
+            let a = eval_raw_ast(l)?;
+            let b = eval_raw_ast(r)?;
+            Ok(append_sum(&a, &b))
+        }
+        Ast::Mul(l, r) => {
+            let a = eval_raw_ast(l)?;
+            let b = eval_raw_ast(r)?;
+            Ok(mul(&a, &b))
+        }
+        Ast::Pow(b, e) => {
+            let base = eval_raw_ast(b)?;
+            let exp = eval_raw_ast(e)?;
+            eval_pow_term(&base, &exp)
+        }
+    }
+}
+
 // ============================================================
 // BOCF → BMS conversion
 // ============================================================

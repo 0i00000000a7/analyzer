@@ -4,7 +4,7 @@ use bms_core::expand::expand_bms;
 use bms_core::hydra::{
     expand_hprss, expand_hydra, expand_lprss, format_hydra_psi, hydra_to_bms, hydra_to_bocf,
     hydra_to_hprss, hydra_to_hprss_standard, hydra_to_lprss, hprss_to_hydra, lprss_to_hydra,
-    normalize_hydra, parse_hydra, term_to_hydra,
+    normalize_hydra, parse_hydra, standardize_hydra, term_to_hydra,
 };
 use bms_core::parser::{bocf_to_bms, eval_ast, parse_bocf};
 use bms_core::term::*;
@@ -107,11 +107,9 @@ fn strip_latex(s: &str) -> String {
                 "left" | "right" => {}
                 _ => r += cmd,
             }
-            while j < bytes.len() && bytes[j] == b'{' {
-                j += 1;
-            }
-            if j < bytes.len() && bytes[j] == b'}' {
-                j += 1;
+            // Skip optional {} after the command (only if both present adjacently)
+            if j + 1 < bytes.len() && bytes[j] == b'{' && bytes[j + 1] == b'}' {
+                j += 2;
             }
             i = j;
         } else {
@@ -157,11 +155,7 @@ fn print_bocf(ordinal: &Term, latex_mode: bool) {
 }
 
 fn print_veblen(ordinal: &Term, latex_mode: bool) {
-    let v = if latex_mode {
-        term_to_veblen(ordinal)
-    } else {
-        term_to_veblen_plain(ordinal)
-    };
+    let v = term_to_veblen(ordinal);
     if !v.is_empty() {
         let v = if latex_mode { v } else { strip_latex(&v) };
         println!("Veblen: {}", v);
@@ -285,6 +279,10 @@ fn cmd_bms(args: &[String]) -> i32 {
             OutputType::ZeroY => print_0y(&m),
             OutputType::Lprss => eprintln!("Error: ordinal is beyond the LPrSS limit φ(ω,0)"),
             OutputType::Bms => print_bms(&m),
+            OutputType::Veblen => {
+                let ordinal = bms_to_bocf(&m);
+                print_veblen(&ordinal, latex_mode);
+            }
             _ => {}
         }
         return 0;
@@ -519,7 +517,7 @@ fn cmd_hprss(args: &[String]) -> i32 {
         }
     }
 
-    let h = normalize_hydra(&hprss_to_hydra(&seq));
+    let h = standardize_hydra(&hprss_to_hydra(&seq));
     match out {
         OutputType::All => {
             println!("PSS Hydra: {}", format_hydra_psi(&h));

@@ -9,21 +9,32 @@ import {
   expandBMS,
   expandUPMS,
   isLegalUPMSMatrix,
+  upmsIsStandard,
+  bocfIsStandard,
+  zeroYIsStandard,
+  oneYIsStandard,
+  wyIsStandard,
+  hprssIsStandard,
+  lprssIsStandard,
   upmsToBMS,
   bocfToBMS,
   cancelBocfToBMS,
   termToVeblen,
   fundamentalSequence,
+  bmsIsStandard,
+  bmsTriangularIsStandard,
 } from '../ts/bms.js';
 import { parse0Y, zeroYToBMS, zeroYExpand, buildMountain } from '../ts/bms-zero-y.js';
 import { triangularToBMS, bmsToTriangular } from '../ts/bms-triangular.js';
 import { expand1Y, expandWY, buildWYMountain, build1YMountain } from '../ts/wy.js';
 import { oneYToDBMS, dbmsToString, dbmsToBMS } from '../ts/y_dbms.js';
 import { hydraAnalyze, hprssAnalyze, lprssAnalyze, expandHPRSS, expandHydra, buildHPRSSMountain, bmsToHydraAnalysis, expandLPRSS, buildLPRSSMountain } from '../ts/hydra.js';
+import { hydraIsStandard } from '../ts/bms.js';
 import type { AnalysisResult, Matrix, Mountain } from '../ts/types.js';
 
 export type InputMode = 'bms' | '0y' | '1y' | 'wy' | 'bocf' | 'upms' | 'hprss' | 'lprss' | 'hydra';
 export type VeblenMode = 'v' | 'm';
+export type BocfDisplayMode = 'normal' | 'psi';
 export type BmsDisplayMode = 'matrix' | 'flat' | 'compact';
 export type UpmsDisplayMode = 'matrix' | 'flat' | 'compact';
 export type BmsCompactStyle = 'brace' | 'alpha';
@@ -42,8 +53,11 @@ function parseCompactToken(token: string): number[] {
         const code = token[i].toUpperCase().charCodeAt(0) - 55; // A=10..Z=35
         result.push(code);
         i++;
-      } else {
+      } else if (/[0-9]/.test(token[i])) {
         result.push(parseInt(token[i], 10));
+        i++;
+      } else {
+        // Invalid character — skip it rather than producing NaN
         i++;
       }
     }
@@ -95,6 +109,7 @@ export function useAnalysis(
   inputValue: Ref<string>,
   veblenMode: Ref<VeblenMode>,
   sugarEnabled: Ref<boolean>,
+  bocfDisplayMode: Ref<BocfDisplayMode>,
   bmsDisplayMode: Ref<BmsDisplayMode>,
   upmsDisplayMode: Ref<UpmsDisplayMode>,
   bmsCompactStyle: Ref<BmsCompactStyle>,
@@ -123,6 +138,11 @@ export function useAnalysis(
 
   const bmsRaw = ref('');
   const upmsRaw = ref('');
+  const nonStandard = ref(false);
+  const forceNonStandard = ref(false);
+  const pendingMatrix = ref<Matrix | null>(null);
+  const bocfNonStandardWarning = ref(false);
+  const hydraNonStandardWarning = ref(false);
   const mountainType = ref<'0y' | '1y' | 'wy' | 'hprss' | 'lprss' | 'hydra' | null>(null);
   const mountainData = ref<Mountain | null>(null);
   const mountainRowLabels = ref<number[][] | null>(null);
@@ -147,6 +167,10 @@ export function useAnalysis(
   function getVeblenOutput(r: AnalysisResult, mode: VeblenMode, sugar: boolean): string | null {
     const key = mode === 'v' ? (sugar ? 'veblen' : 'veblenPlain') : sugar ? 'veblenMatrix' : 'veblenMatrixPlain';
     return (r as any)[key] || null;
+  }
+
+  function getBocfOutput(r: AnalysisResult, mode: BocfDisplayMode): string | null {
+    return mode === 'psi' ? (r.psiSimple || null) : (r.ordinal || null);
   }
 
   function formatCompactVal(n: number, style: BmsCompactStyle): string {
@@ -232,10 +256,26 @@ function renderUpms(raw: string): string {
     currentUPMSMatrix = null;
     currentHPRSSSeq = null;
     currentLPRSSSeq.value = [];
+    nonStandard.value = false;
+    bocfNonStandardWarning.value = false;
+    hydraNonStandardWarning.value = false;
+    pendingMatrix.value = null;
   }
 
-  async function update() {
+  async function checkSeqStandard(seq: number[], checker: (s: number[]) => Promise<boolean>): Promise<boolean> {
+    if (forceNonStandard.value) return true;
+    const std = await checker(seq);
+    if (!std) {
+      nonStandard.value = true;
+      pendingMatrix.value = seq.map((v) => [v]);
+      return false;
+    }
+    return true;
+  }
+
+  async function update(forceNonStd = false) {
     try {
+      if (!forceNonStd) forceNonStandard.value = false;
       clearOutputs();
       const rawInput = transformInput(inputValue.value, inputMode.value);
 
@@ -294,16 +334,30 @@ function renderUpms(raw: string): string {
           triangularHtml.value = katex.renderToString('\\text{' + aligned + '}', { throwOnError: false });
         }
       } else if (pref === 'triangular' || (pref === 'auto' && isTri)) {
-        // Triangular BMS input → convert to normal BMS
+        // Triangular BMS input → check standardness of the triangular form, then convert
         if (isTri) {
+          if (!forceNonStandard.value) {
+            const triStd = await bmsTriangularIsStandard(matrix);
+            if (!triStd) {
+              nonStandard.value = true;
+              pendingMatrix.value = matrix;
+              return;
+            }
+          }
           matrix = await triangularToBMS(matrix);
         }
       }
 
       const r = await analyze(matrix);
+      if (!r.isStandard && !forceNonStandard.value) {
+        nonStandard.value = true;
+        pendingMatrix.value = matrix;
+        return;
+      }
+      nonStandard.value = false;
       lastResult = r;
-      ordinalHtml.value = katex.renderToString(r.ordinal, { throwOnError: false });
-
+      const bocfOut = getBocfOutput(r, bocfDisplayMode.value);
+      ordinalHtml.value = bocfOut ? katex.renderToString(bocfOut, { throwOnError: false }) : '';
       const seq = await bmsTo0YSequence(matrix);
       zeroYHtml.value = seq ? katex.renderToString(seq, { throwOnError: false }) : '';
 
@@ -336,11 +390,25 @@ function renderUpms(raw: string): string {
       ordinalHtml.value = '(error)';
       return;
     }
-    ordinalHtml.value = r.ordinal ? katex.renderToString(r.ordinal, { throwOnError: false }) : '';
     if (r.ordinalJS) {
       currentBocfOrdinal = r.ordinalJS;
+
+      // Check standardness with intermediate warning level
+      if (!forceNonStandard.value) {
+        const std = await bocfIsStandard(rawInput);
+        if (std === 2) {
+          nonStandard.value = true;
+          pendingMatrix.value = [[]];
+          return;
+        } else if (std === 1) {
+          bocfNonStandardWarning.value = true;
+        }
+      }
+
       const v = await termToVeblen(r.ordinalJS);
-      lastResult = { gteEBO: false, ordinal: r.ordinal, ordinalJS: r.ordinalJS, ...v, nsForm: '', isStandard: true } as AnalysisResult;
+      lastResult = { gteEBO: false, ordinal: r.ordinal, ordinalJS: r.ordinalJS, psiSimple: r.psiSimple, ...v, nsForm: '', isStandard: true } as AnalysisResult;
+      const bocfOut = getBocfOutput(lastResult, bocfDisplayMode.value);
+      ordinalHtml.value = bocfOut ? katex.renderToString(bocfOut, { throwOnError: false }) : '';
       if (lastResult.veblen) {
         const veblenOut = getVeblenOutput(lastResult, veblenMode.value, sugarEnabled.value);
         if (veblenOut) veblenHtml.value = katex.renderToString(veblenOut, { throwOnError: false });
@@ -374,7 +442,8 @@ function renderUpms(raw: string): string {
       const matrix: Matrix = [];
       const r = await analyze(matrix);
       lastResult = r;
-      ordinalHtml.value = katex.renderToString(r.ordinal, { throwOnError: false });
+      const bocfOut = getBocfOutput(r, bocfDisplayMode.value);
+      ordinalHtml.value = bocfOut ? katex.renderToString(bocfOut, { throwOnError: false }) : '';
       bmsRaw.value = '';
       bmsHtml.value = '';
       showBmsRow.value = true;
@@ -382,6 +451,7 @@ function renderUpms(raw: string): string {
     }
     const seq = parse0Y(rawInput);
     if (seq.length === 0 || seq.some(isNaN)) return;
+    if (!(await checkSeqStandard(seq, zeroYIsStandard))) return;
 
     current0YSeq = seq;
     const matrix = await zeroYToBMS(seq);
@@ -430,6 +500,7 @@ function renderUpms(raw: string): string {
     let seq = parse0Y(rawInput);
     if (seq.some(isNaN) || rawInput === '') seq = [0];
     current1YSeq = seq;
+    if (rawInput !== '' && !(await checkSeqStandard(seq, oneYIsStandard))) return;
 
     try {
       const result = await build1YMountain(seq);
@@ -477,6 +548,7 @@ function renderUpms(raw: string): string {
     let seq = parse0Y(rawInput);
     if (seq.some(isNaN) || rawInput === '') seq = [0];
     currentWYSeq = seq;
+    if (rawInput !== '' && !(await checkSeqStandard(seq, wyIsStandard))) return;
 
     try {
       const result = await buildWYMountain(seq, -1);
@@ -528,6 +600,15 @@ function renderUpms(raw: string): string {
     if (expr.length === 0) return;
     currentUPMSMatrix = expr;
 
+    if (!forceNonStandard.value) {
+      const std = await upmsIsStandard(expr);
+      if (!std) {
+        nonStandard.value = true;
+        pendingMatrix.value = expr;
+        return;
+      }
+    }
+
     // Use UPMS-specific formatting
     const upmsFlat = matrixToDisplayStr(expr);
     upmsRaw.value = upmsFlat;
@@ -572,6 +653,7 @@ function renderUpms(raw: string): string {
   async function handleHPRSS(rawInput: string) {
     const seq = parse0Y(rawInput);
     if (seq.length === 0 || seq.some(isNaN)) return;
+    if (!(await checkSeqStandard(seq, hprssIsStandard))) return;
     currentHPRSSSeq = seq;
 
     const ha = await hprssAnalyze(seq);
@@ -619,6 +701,7 @@ function renderUpms(raw: string): string {
   async function handleLPRSS(rawInput: string) {
     const seq = parse0Y(rawInput);
     if (seq.length === 0 || seq.some(isNaN)) return;
+    if (!(await checkSeqStandard(seq, lprssIsStandard))) return;
     currentLPRSSSeq.value = seq;
 
     const ha = await lprssAnalyze(seq);
@@ -676,6 +759,19 @@ function renderUpms(raw: string): string {
       ordinalHtml.value = '(error)';
       return;
     }
+
+    // Check standardness with intermediate warning level
+    if (!forceNonStandard.value) {
+      const std = await hydraIsStandard(rawInput);
+      if (std === 2) {
+        nonStandard.value = true;
+        pendingMatrix.value = [[]];
+        return;
+      } else if (std === 1) {
+        hydraNonStandardWarning.value = true;
+      }
+    }
+
     ordinalHtml.value = ha.ordinal ? katex.renderToString(ha.ordinal, { throwOnError: false }) : '';
 
     if (ha.veblen) {
@@ -822,12 +918,28 @@ function renderUpms(raw: string): string {
     }
   });
 
+  watch(bocfDisplayMode, () => {
+    if (lastResult) {
+      const bocfOut = getBocfOutput(lastResult, bocfDisplayMode.value);
+      ordinalHtml.value = bocfOut ? katex.renderToString(bocfOut, { throwOnError: false }) : '';
+    }
+  });
+
+  function forceNonStandardConvert() {
+    if (!pendingMatrix.value) return;
+    forceNonStandard.value = true;
+    nonStandard.value = false;
+    update(true);
+  }
+
   return {
     ordinalHtml, veblenHtml, zeroYHtml, dbmsHtml, bmsHtml, triangularHtml, upmsHtml,
     hydraHtml, hprssHtml, lprssHtml,
     showDbmsRow, showBmsRow, showTriangularRow, showUpmsRow, showMountainRow,
     showHydraRow, showHprssRow, showLprssRow,
     bmsRaw, mountainType, mountainData, mountainRowLabels,
+    nonStandard, forceNonStandardConvert,
+    bocfNonStandardWarning, hydraNonStandardWarning,
     converting, convertStatus, convertBocfToBms, cancelConvert,
     expandResult, expandFs, doExpand,
   };

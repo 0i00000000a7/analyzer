@@ -1,10 +1,11 @@
 <script lang="ts" setup vapor>
 import { ref, onMounted, onUnmounted } from 'vue';
 import katex from 'katex';
-import type { VeblenMode, BmsDisplayMode, UpmsDisplayMode, BmsCompactStyle, BmsInputPreference } from '../composables/useAnalysis';
+import type { VeblenMode, BocfDisplayMode, BmsDisplayMode, UpmsDisplayMode, BmsCompactStyle, BmsInputPreference } from '../composables/useAnalysis';
 
 const veblenMode = defineModel<VeblenMode>('veblenMode', { required: true });
 const sugarEnabled = defineModel<boolean>('sugarEnabled', { required: true });
+const bocfDisplayMode = defineModel<BocfDisplayMode>('bocfDisplayMode', { required: true });
 const bmsDisplayMode = defineModel<BmsDisplayMode>('bmsDisplayMode', { required: true });
 const upmsDisplayMode = defineModel<UpmsDisplayMode>('upmsDisplayMode', { required: true });
 const bmsCompactStyle = defineModel<BmsCompactStyle>('bmsCompactStyle', { required: true });
@@ -39,6 +40,11 @@ const veblenMHtml = katex.renderToString('\\begin{smallmatrix}\\alpha\\\\\\beta\
         <label class="settings-label">
           <input type="checkbox" v-model="sugarEnabled" /> Sugar
         </label>
+      </div>
+      <div class="settings-row">
+        <span class="label">BOCF</span>
+        <button class="mode-btn" :class="{ active: bocfDisplayMode === 'normal' }" @click="bocfDisplayMode = 'normal'">Normal</button>
+        <button class="mode-btn" :class="{ active: bocfDisplayMode === 'psi' }" @click="bocfDisplayMode = 'psi'">ψ Raw</button>
       </div>
       <div class="settings-row">
         <span class="label">BMS</span>

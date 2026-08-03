@@ -108,6 +108,16 @@ export async function matrixLexOrder(a: Matrix, b: Matrix): Promise<number> {
   return wasmModule.matrixLexOrder(a, b);
 }
 
+export async function bmsIsStandard(matrix: Matrix): Promise<boolean> {
+  await ensureLoaded();
+  return wasmModule.bmsIsStandard(matrix);
+}
+
+export async function bmsTriangularIsStandard(matrix: Matrix): Promise<boolean> {
+  await ensureLoaded();
+  return wasmModule.bmsTriangularIsStandard(matrix);
+}
+
 export async function init(): Promise<void> {
   await ensureLoaded();
 }
@@ -121,7 +131,7 @@ export async function bmsTo0YSequence(matrix: Matrix): Promise<string> {
 /** Parse and evaluate a BOCF expression via WASM, returning {ast, ordinal, ordinalJS, error} */
 export async function parseAndEvalBOCF(
   input: string,
-): Promise<{ ast: string; ordinal: string; ordinalJS: any[]; error: string; hydra?: string; hprss?: number[] }> {
+): Promise<{ ast: string; ordinal: string; ordinalJS: any[]; psiSimple: string; error: string; hydra?: string; hprss?: number[] }> {
   await ensureLoaded();
   return wasmModule.parseAndEvalBOCF(input);
 }
@@ -142,6 +152,52 @@ export async function expandUPMS(matrix: Matrix, fs: number): Promise<Matrix> {
 export async function isLegalUPMSMatrix(matrix: Matrix): Promise<boolean> {
   await ensureLoaded();
   return wasmModule.isLegalUPMSMatrix(matrix);
+}
+
+/** Check UPMS standardness via WASM */
+export async function upmsIsStandard(matrix: Matrix): Promise<boolean> {
+  await ensureLoaded();
+  return wasmModule.upmsIsStandard(matrix);
+}
+
+/** Check Y-sequence standardness via WASM */
+export async function zeroYIsStandard(seq: number[]): Promise<boolean> {
+  await ensureLoaded();
+  return wasmModule.zeroYIsStandard(seq);
+}
+
+export async function oneYIsStandard(seq: number[]): Promise<boolean> {
+  await ensureLoaded();
+  return wasmModule.oneYIsStandard(seq);
+}
+
+export async function wyIsStandard(seq: number[]): Promise<boolean> {
+  await ensureLoaded();
+  return wasmModule.wyIsStandard(seq);
+}
+
+export async function hprssIsStandard(seq: number[]): Promise<boolean> {
+  await ensureLoaded();
+  return wasmModule.hprssIsStandard(seq);
+}
+
+export async function lprssIsStandard(seq: number[]): Promise<boolean> {
+  await ensureLoaded();
+  return wasmModule.lprssIsStandard(seq);
+}
+
+/** Check BOCF standardness of a raw input expression.
+ * Returns 0 = standard, 1 = non-standard but normalizable, 2 = non-standard. */
+export async function bocfIsStandard(input: string): Promise<number> {
+  await ensureLoaded();
+  return wasmModule.bocfIsStandard(input);
+}
+
+/** Check PSS hydra standardness of a raw input expression.
+ * Returns 0 = standard, 1 = non-standard but standardizeable, 2 = non-standard. */
+export async function hydraIsStandard(input: string): Promise<number> {
+  await ensureLoaded();
+  return wasmModule.hydraIsStandard(input);
 }
 
 /** Convert UPMS expression to BMS via WASM */
@@ -177,6 +233,12 @@ export async function termToVeblen(term: any[]): Promise<{
 }> {
   await ensureLoaded();
   return wasmModule.termToVeblen(term);
+}
+
+/** Convert an ordinal term (JS array) to raw ψ_a(b)+c form */
+export async function termToPsiSimple(term: any[]): Promise<string> {
+  await ensureLoaded();
+  return wasmModule.termToPsiSimple(term);
 }
 
 export async function fundamentalSequence(term: any[], n: number): Promise<{ term: string; termJS: any[] }> {

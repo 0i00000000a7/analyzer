@@ -11,6 +11,7 @@ export interface AnalysisResult {
   gteEBO: boolean;
   ordinal: string;
   ordinalJS: any[][];
+  psiSimple: string;
   veblen: string;
   veblenPlain: string;
   veblenMatrix: string;
@@ -22,7 +23,10 @@ export interface AnalysisResult {
 /** Type for the WASM module */
 export interface BmsWasmModule {
   bmsAnalyze(matrix: Matrix): AnalysisResult;
+  bmsIsStandard(matrix: Matrix): boolean;
+  bmsTriangularIsStandard(matrix: Matrix): boolean;
   matrixLexOrder(a: Matrix, b: Matrix): number;
+  termToPsiSimple(term: any[]): string;
 }
 
 /** A node in the 0-Y mountain diagram */

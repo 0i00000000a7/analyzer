@@ -486,6 +486,131 @@ pub fn is_legal_upms_matrix(matrix: &Matrix) -> bool {
     true
 }
 
+/// UPMS standardness check (mirrors BMS chkStd from basmat.c).
+///
+/// The initial part is identical to chkStd: the input must not exceed the
+/// identity sequence (column i = (i,i,...,i)), and the first column that
+/// drops below it becomes the starting point `p`. The identity prefixes
+/// like `(0,0,0)(1,1,1)` / `(0,0,0,0)(1,1,1,1)` are standard directly.
+///
+/// After that, instead of chkStd's fast copyBadSequence, the fundamental
+/// sequence of the current sequence-above is generated one bad-part copy at
+/// a time with the UPMS expansion helpers, comparing the input columns as
+/// the copies are appended.
+pub fn is_standard_upms_matrix(matrix: &Matrix) -> bool {
+    if !is_legal_upms_matrix(matrix) {
+        return false;
+    }
+    let nc = matrix.len();
+    if nc == 0 {
+        return true;
+    }
+    let nr = matrix.iter().map(|c| c.len()).max().unwrap_or(0);
+    let mut s: Vec<Vec<i32>> = Vec::with_capacity(nc);
+    for i in 0..nc {
+        let mut col = matrix[i].clone();
+        while col.len() < nr {
+            col.push(0);
+        }
+        s.push(col);
+    }
+
+    // Check real numbers of row
+    let mut row = 0usize;
+    for i in 0..nc {
+        if row + 1 == nr {
+            break;
+        }
+        for j in (row + 1)..nr {
+            if s[i][j] > 0 {
+                row = j;
+            }
+        }
+    }
+
+    // Find smaller column p (identity check)
+    let mut p: Option<usize> = None;
+    'outer: for i in 0..nc {
+        for j in 0..=row {
+            if s[i][j] > i as i32 {
+                return false;
+            }
+            if s[i][j] < i as i32 {
+                p = Some(i);
+                break 'outer;
+            }
+        }
+    }
+    let p = match p {
+        Some(p) => p,
+        None => return true,
+    };
+
+    // Make a sequence above S (SA): identity columns 0..=p
+    let mut sa: Vec<Vec<i32>> = (0..=p).map(|i| vec![i as i32; row + 1]).collect();
+
+    let mut pp = p;
+    loop {
+        // Fundamental sequence of the prefix sa[0..=pp] (UPMS expansion)
+        let prefix: Matrix = sa[..=pp].to_vec();
+        let mut ctx = Context::new(&prefix);
+        let Some((root_col, t)) = find_bad_root(&mut ctx) else {
+            return false;
+        };
+        let bad = pp - root_col;
+        if bad == 0 {
+            return false;
+        }
+        let b: Matrix = prefix[root_col..pp].to_vec();
+        let delta = compute_delta(&ctx, root_col, t);
+        let vr = compute_upms_verification_roots(&mut ctx, root_col, t);
+        let num = (nc + 1 - pp) / bad + 1;
+        for h in 1..=num {
+            let mut bh = generate_bh(&ctx, &b, &delta, t, h as i32, root_col, &vr);
+            // Context::new trims all-zero trailing rows; restore the full
+            // row count so the columns stay comparable with the input.
+            for col in bh.iter_mut() {
+                while col.len() < row + 1 {
+                    col.push(0);
+                }
+            }
+            for (k, col) in bh.iter().enumerate() {
+                let idx = pp + (h - 1) * bad + k;
+                if idx < sa.len() {
+                    sa[idx] = col.clone();
+                } else {
+                    sa.push(col.clone());
+                }
+            }
+        }
+
+        let mut newp: Option<usize> = None;
+        for i in pp..nc {
+            let mut smaller = false;
+            let mut larger = false;
+            for j in 0..=row {
+                if s[i][j] > sa[i][j] {
+                    larger = true;
+                }
+                if s[i][j] < sa[i][j] {
+                    smaller = true;
+                }
+            }
+            if larger && !smaller {
+                return false;
+            }
+            if larger || smaller {
+                newp = Some(i);
+                break;
+            }
+        }
+        match newp {
+            None => return true,
+            Some(n) => pp = n,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,6 +636,75 @@ mod tests {
         let bms = vec![[0, 0, 0], [1, 1, 1], [2, 1, 0], [1, 1, 1]];
         let result = bms_to_upms_squeeze(&bms).unwrap();
         assert_eq!(result, vec![[0, 0, 0], [1, 1, 1], [2, 1, 1]]);
+    }
+
+    #[test]
+    fn upms_standardness_basic() {
+        // Identity prefixes are standard directly.
+        assert!(is_standard_upms_matrix(&vec![vec![0, 0, 0], vec![1, 1, 1]]));
+        assert!(is_standard_upms_matrix(&vec![vec![0, 0, 0, 0], vec![1, 1, 1, 1]]));
+        assert!(is_standard_upms_matrix(&vec![vec![0]]));
+        // The UPMS boundary is standard.
+        assert!(is_standard_upms_matrix(&vec![vec![0, 0, 0], vec![1, 1, 1], vec![2, 1, 1]]));
+        // Identity itself.
+        assert!(is_standard_upms_matrix(&vec![vec![0, 0, 0], vec![1, 1, 1], vec![2, 2, 2]]));
+        // Above the identity at column 1 → not standard.
+        assert!(!is_standard_upms_matrix(&vec![vec![0], vec![2, 2]]));
+        // Illegal (increasing down a column) → not standard.
+        assert!(!is_standard_upms_matrix(&vec![vec![0], vec![1, 2]]));
+        // Above the identity at column 2 → not standard.
+        assert!(!is_standard_upms_matrix(&vec![
+            vec![0],
+            vec![1],
+            vec![3, 1],
+        ]));
+    }
+
+    #[test]
+    fn upms_standardness_fs_chain() {
+        // (0,0,0)(1,1,1)(2,2,2) → (2,2,1) → (2,2,0) → (2,1,1) → (2,1,0)
+        // All elements of the FS chain are standard.
+        assert!(is_standard_upms_matrix(&vec![
+            vec![0, 0, 0],
+            vec![1, 1, 1],
+            vec![2, 2, 1],
+        ]));
+        assert!(is_standard_upms_matrix(&vec![
+            vec![0, 0, 0],
+            vec![1, 1, 1],
+            vec![2, 2, 0],
+        ]));
+        assert!(is_standard_upms_matrix(&vec![
+            vec![0, 0, 0],
+            vec![1, 1, 1],
+            vec![2, 1, 0],
+        ]));
+        // Identity prefix extension is standard.
+        assert!(is_standard_upms_matrix(&vec![
+            vec![0, 0, 0],
+            vec![1, 1, 1],
+            vec![2, 2, 2],
+            vec![2, 2, 2],
+        ]));
+        // Non-standard: second column exceeds the FS chain of the identity.
+        assert!(!is_standard_upms_matrix(&vec![
+            vec![0],
+            vec![1, 1, 1],
+            vec![2, 1, 1],
+            vec![2, 2, 2],
+        ]));
+        assert!(!is_standard_upms_matrix(&vec![
+            vec![0],
+            vec![1],
+            vec![1, 1],
+            vec![1, 1, 1],
+        ]));
+        // Non-standard: illegal column (0 ≥ 1 fails).
+        assert!(!is_standard_upms_matrix(&vec![
+            vec![0],
+            vec![1, 1, 1],
+            vec![2, 0, 1],
+        ]));
     }
 }
 

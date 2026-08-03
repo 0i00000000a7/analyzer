@@ -1,5 +1,5 @@
 <script lang="ts" setup vapor>
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import 'katex/dist/katex.min.css';
 import './assets/default.css';
 import ThemeToggle from './components/ThemeToggle.vue';
@@ -8,22 +8,78 @@ import InputPanel from './components/InputPanel.vue';
 import OutputPanel from './components/OutputPanel.vue';
 import ExpandPanel from './components/ExpandPanel.vue';
 import MountainDiagram from './components/MountainDiagram.vue';
-import { useAnalysis, type InputMode, type VeblenMode, type BmsDisplayMode, type UpmsDisplayMode, type BmsCompactStyle, type BmsInputPreference } from './composables/useAnalysis';
+import { useAnalysis, type InputMode, type VeblenMode, type BocfDisplayMode, type BmsDisplayMode, type UpmsDisplayMode, type BmsCompactStyle, type BmsInputPreference } from './composables/useAnalysis';
 
 declare const __APP_VERSION__: string;
 const version = __APP_VERSION__;
 
+const SETTINGS_KEY = 'bms-analyzer-settings';
+
+interface Settings {
+  veblenMode: VeblenMode;
+  sugarEnabled: boolean;
+  bocfDisplayMode: BocfDisplayMode;
+  bmsDisplayMode: BmsDisplayMode;
+  upmsDisplayMode: UpmsDisplayMode;
+  bmsCompactStyle: BmsCompactStyle;
+  upmsCompactStyle: BmsCompactStyle;
+  bmsInputPref: BmsInputPreference;
+}
+
+const defaults: Settings = {
+  veblenMode: 'v',
+  sugarEnabled: true,
+  bocfDisplayMode: 'normal',
+  bmsDisplayMode: 'flat',
+  upmsDisplayMode: 'flat',
+  bmsCompactStyle: 'alpha',
+  upmsCompactStyle: 'alpha',
+  bmsInputPref: 'auto',
+};
+
+function loadSettings(): Settings {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    const s = { ...defaults, ...raw };
+    if (!['v', 'm'].includes(s.veblenMode)) s.veblenMode = defaults.veblenMode;
+    if (!['normal', 'psi'].includes(s.bocfDisplayMode)) s.bocfDisplayMode = defaults.bocfDisplayMode;
+    if (!['matrix', 'flat', 'compact'].includes(s.bmsDisplayMode)) s.bmsDisplayMode = defaults.bmsDisplayMode;
+    if (!['matrix', 'flat', 'compact'].includes(s.upmsDisplayMode)) s.upmsDisplayMode = defaults.upmsDisplayMode;
+    if (!['brace', 'alpha'].includes(s.bmsCompactStyle)) s.bmsCompactStyle = defaults.bmsCompactStyle;
+    if (!['brace', 'alpha'].includes(s.upmsCompactStyle)) s.upmsCompactStyle = defaults.upmsCompactStyle;
+    if (!['auto', 'normal', 'triangular'].includes(s.bmsInputPref)) s.bmsInputPref = defaults.bmsInputPref;
+    return s;
+  } catch {
+    return { ...defaults };
+  }
+}
+
+const saved = loadSettings();
 const inputMode = ref<InputMode>('bms');
 const inputValue = ref('(0,0,0)(1,1,1)(2,1,0)(1,1,1)');
-const veblenMode = ref<VeblenMode>('v');
-const sugarEnabled = ref(true);
-const bmsDisplayMode = ref<BmsDisplayMode>('flat');
-const upmsDisplayMode = ref<UpmsDisplayMode>('flat');
-const bmsCompactStyle = ref<BmsCompactStyle>('alpha');
-const upmsCompactStyle = ref<BmsCompactStyle>('alpha');
-const bmsInputPref = ref<BmsInputPreference>('auto');
+const veblenMode = ref<VeblenMode>(saved.veblenMode);
+const sugarEnabled = ref<boolean>(saved.sugarEnabled);
+const bocfDisplayMode = ref<BocfDisplayMode>(saved.bocfDisplayMode);
+const bmsDisplayMode = ref<BmsDisplayMode>(saved.bmsDisplayMode);
+const upmsDisplayMode = ref<UpmsDisplayMode>(saved.upmsDisplayMode);
+const bmsCompactStyle = ref<BmsCompactStyle>(saved.bmsCompactStyle);
+const upmsCompactStyle = ref<BmsCompactStyle>(saved.upmsCompactStyle);
+const bmsInputPref = ref<BmsInputPreference>(saved.bmsInputPref);
 
-const analysis = useAnalysis(inputMode, inputValue, veblenMode, sugarEnabled, bmsDisplayMode, upmsDisplayMode, bmsCompactStyle, upmsCompactStyle, bmsInputPref);
+watch([veblenMode, sugarEnabled, bocfDisplayMode, bmsDisplayMode, upmsDisplayMode, bmsCompactStyle, upmsCompactStyle, bmsInputPref], () => {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+    veblenMode: veblenMode.value,
+    sugarEnabled: sugarEnabled.value,
+    bocfDisplayMode: bocfDisplayMode.value,
+    bmsDisplayMode: bmsDisplayMode.value,
+    upmsDisplayMode: upmsDisplayMode.value,
+    bmsCompactStyle: bmsCompactStyle.value,
+    upmsCompactStyle: upmsCompactStyle.value,
+    bmsInputPref: bmsInputPref.value,
+  }));
+});
+
+const analysis = useAnalysis(inputMode, inputValue, veblenMode, sugarEnabled, bocfDisplayMode, bmsDisplayMode, upmsDisplayMode, bmsCompactStyle, upmsCompactStyle, bmsInputPref);
 </script>
 
 <template>
@@ -31,9 +87,16 @@ const analysis = useAnalysis(inputMode, inputValue, veblenMode, sugarEnabled, bm
   <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 4px">
     <h1 style="margin: 0">BMS analyzer</h1>
     <span class="muted" style="font-size: 11pt; align-self: flex-end; margin-bottom: 2px">v{{ version }}</span>
-    <SettingsPanel v-model:veblenMode="veblenMode" v-model:sugarEnabled="sugarEnabled" v-model:bmsDisplayMode="bmsDisplayMode" v-model:upmsDisplayMode="upmsDisplayMode" v-model:bmsCompactStyle="bmsCompactStyle" v-model:upmsCompactStyle="upmsCompactStyle" v-model:bmsInputPref="bmsInputPref" />
+    <SettingsPanel v-model:veblenMode="veblenMode" v-model:sugarEnabled="sugarEnabled" v-model:bocfDisplayMode="bocfDisplayMode" v-model:bmsDisplayMode="bmsDisplayMode" v-model:upmsDisplayMode="upmsDisplayMode" v-model:bmsCompactStyle="bmsCompactStyle" v-model:upmsCompactStyle="upmsCompactStyle" v-model:bmsInputPref="bmsInputPref" />
   </div>
   <InputPanel v-model:mode="inputMode" v-model:value="inputValue" />
+  <div v-if="analysis.nonStandard.value" style="display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 6px">
+    <span style="color: #d97706; font-size: 11pt">Input is not standard (conversion may be incorrect)</span>
+    <button class="mode-btn" @click="analysis.forceNonStandardConvert()">Convert anyway</button>
+  </div>
+  <div v-if="analysis.bocfNonStandardWarning.value || analysis.hydraNonStandardWarning.value" style="display: flex; justify-content: center; margin-top: 6px">
+    <span style="color: #ca8a04; font-size: 10pt">Input is not standard (will be standardized)</span>
+  </div>
   <hr />
   <OutputPanel
     :inputMode="inputMode"

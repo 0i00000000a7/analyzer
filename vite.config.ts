@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import { readFileSync } from 'node:fs';
 import vue from '@vitejs/plugin-vue';
 
-const version = readFileSync('version.txt', 'utf-8').trim();
+const { version } = JSON.parse(readFileSync('package.json', 'utf-8'));
 
 export default defineConfig({
   base: './',

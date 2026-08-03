@@ -1,12 +1,14 @@
 <script lang="ts" setup vapor>
 import { ref, onMounted, onUnmounted } from 'vue';
 import katex from 'katex';
-import type { VeblenMode, BmsDisplayMode, UpmsDisplayMode, BmsInputPreference } from '../composables/useAnalysis';
+import type { VeblenMode, BmsDisplayMode, UpmsDisplayMode, BmsCompactStyle, BmsInputPreference } from '../composables/useAnalysis';
 
 const veblenMode = defineModel<VeblenMode>('veblenMode', { required: true });
 const sugarEnabled = defineModel<boolean>('sugarEnabled', { required: true });
 const bmsDisplayMode = defineModel<BmsDisplayMode>('bmsDisplayMode', { required: true });
 const upmsDisplayMode = defineModel<UpmsDisplayMode>('upmsDisplayMode', { required: true });
+const bmsCompactStyle = defineModel<BmsCompactStyle>('bmsCompactStyle', { required: true });
+const upmsCompactStyle = defineModel<BmsCompactStyle>('upmsCompactStyle', { required: true });
 const bmsInputPref = defineModel<BmsInputPreference>('bmsInputPref', { required: true });
 
 const open = ref(false);
@@ -42,13 +44,21 @@ const veblenMHtml = katex.renderToString('\\begin{smallmatrix}\\alpha\\\\\\beta\
         <span class="label">BMS</span>
         <button class="mode-btn" :class="{ active: bmsDisplayMode === 'matrix' }" @click="bmsDisplayMode = 'matrix'">Matrix</button>
         <button class="mode-btn" :class="{ active: bmsDisplayMode === 'flat' }" @click="bmsDisplayMode = 'flat'">Flat</button>
-        <button class="mode-btn" :class="{ active: bmsDisplayMode === 'compact' }" @click="bmsDisplayMode = 'compact'">Compact</button>
+        <button class="mode-btn" :class="{ active: bmsDisplayMode === 'compact' }" @click="bmsDisplayMode = 'compact'; bmsCompactStyle = 'alpha'">Compact</button>
+        <template v-if="bmsDisplayMode === 'compact'">
+          <button class="mode-btn sub" :class="{ active: bmsCompactStyle === 'brace' }" @click="bmsCompactStyle = 'brace'">Brace</button>
+          <button class="mode-btn sub" :class="{ active: bmsCompactStyle === 'alpha' }" @click="bmsCompactStyle = 'alpha'">Alpha</button>
+        </template>
       </div>
       <div class="settings-row">
         <span class="label">UPMS</span>
         <button class="mode-btn" :class="{ active: upmsDisplayMode === 'matrix' }" @click="upmsDisplayMode = 'matrix'">Matrix</button>
         <button class="mode-btn" :class="{ active: upmsDisplayMode === 'flat' }" @click="upmsDisplayMode = 'flat'">Flat</button>
-        <button class="mode-btn" :class="{ active: upmsDisplayMode === 'compact' }" @click="upmsDisplayMode = 'compact'">Compact</button>
+        <button class="mode-btn" :class="{ active: upmsDisplayMode === 'compact' }" @click="upmsDisplayMode = 'compact'; upmsCompactStyle = 'alpha'">Compact</button>
+        <template v-if="upmsDisplayMode === 'compact'">
+          <button class="mode-btn sub" :class="{ active: upmsCompactStyle === 'brace' }" @click="upmsCompactStyle = 'brace'">Brace</button>
+          <button class="mode-btn sub" :class="{ active: upmsCompactStyle === 'alpha' }" @click="upmsCompactStyle = 'alpha'">Alpha</button>
+        </template>
       </div>
       <div class="settings-section">Input Preference</div>
       <div class="settings-row">

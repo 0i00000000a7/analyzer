@@ -8,7 +8,7 @@ import InputPanel from './components/InputPanel.vue';
 import OutputPanel from './components/OutputPanel.vue';
 import ExpandPanel from './components/ExpandPanel.vue';
 import MountainDiagram from './components/MountainDiagram.vue';
-import { useAnalysis, type InputMode, type VeblenMode, type BmsDisplayMode, type UpmsDisplayMode, type BmsInputPreference } from './composables/useAnalysis';
+import { useAnalysis, type InputMode, type VeblenMode, type BmsDisplayMode, type UpmsDisplayMode, type BmsCompactStyle, type BmsInputPreference } from './composables/useAnalysis';
 
 declare const __APP_VERSION__: string;
 const version = __APP_VERSION__;
@@ -19,9 +19,11 @@ const veblenMode = ref<VeblenMode>('v');
 const sugarEnabled = ref(true);
 const bmsDisplayMode = ref<BmsDisplayMode>('flat');
 const upmsDisplayMode = ref<UpmsDisplayMode>('flat');
+const bmsCompactStyle = ref<BmsCompactStyle>('alpha');
+const upmsCompactStyle = ref<BmsCompactStyle>('alpha');
 const bmsInputPref = ref<BmsInputPreference>('auto');
 
-const analysis = useAnalysis(inputMode, inputValue, veblenMode, sugarEnabled, bmsDisplayMode, upmsDisplayMode, bmsInputPref);
+const analysis = useAnalysis(inputMode, inputValue, veblenMode, sugarEnabled, bmsDisplayMode, upmsDisplayMode, bmsCompactStyle, upmsCompactStyle, bmsInputPref);
 </script>
 
 <template>
@@ -29,7 +31,7 @@ const analysis = useAnalysis(inputMode, inputValue, veblenMode, sugarEnabled, bm
   <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 4px">
     <h1 style="margin: 0">BMS analyzer</h1>
     <span class="muted" style="font-size: 11pt; align-self: flex-end; margin-bottom: 2px">v{{ version }}</span>
-    <SettingsPanel v-model:veblenMode="veblenMode" v-model:sugarEnabled="sugarEnabled" v-model:bmsDisplayMode="bmsDisplayMode" v-model:upmsDisplayMode="upmsDisplayMode" v-model:bmsInputPref="bmsInputPref" />
+    <SettingsPanel v-model:veblenMode="veblenMode" v-model:sugarEnabled="sugarEnabled" v-model:bmsDisplayMode="bmsDisplayMode" v-model:upmsDisplayMode="upmsDisplayMode" v-model:bmsCompactStyle="bmsCompactStyle" v-model:upmsCompactStyle="upmsCompactStyle" v-model:bmsInputPref="bmsInputPref" />
   </div>
   <InputPanel v-model:mode="inputMode" v-model:value="inputValue" />
   <hr />

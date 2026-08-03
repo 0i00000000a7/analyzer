@@ -26,18 +26,39 @@ export type InputMode = 'bms' | '0y' | '1y' | 'wy' | 'bocf' | 'upms' | 'hprss' |
 export type VeblenMode = 'v' | 'm';
 export type BmsDisplayMode = 'matrix' | 'flat' | 'compact';
 export type UpmsDisplayMode = 'matrix' | 'flat' | 'compact';
+export type BmsCompactStyle = 'brace' | 'alpha';
 export type BmsInputPreference = 'auto' | 'normal' | 'triangular';
 
-function transformInput(raw: string, mode: InputMode): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return raw;
-  if (trimmed.includes('(') || trimmed.includes(',')) return raw;
-  if (!/^[0-9\s]+$/.test(trimmed)) return raw;
-  const tokens = trimmed.split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return raw;
-  if (mode === 'bms' || mode === 'upms') return tokens.map((t) => '(' + t.split('').join(',') + ')').join('');
-  return tokens.join(',');
-}
+function parseCompactToken(token: string): number[] {
+    const result: number[] = [];
+    let i = 0;
+    while (i < token.length) {
+      if (token[i] === '{') {
+        const end = token.indexOf('}', i);
+        if (end === -1) break;
+        result.push(parseInt(token.slice(i + 1, end), 10));
+        i = end + 1;
+      } else if (/[a-zA-Z]/.test(token[i])) {
+        const code = token[i].toUpperCase().charCodeAt(0) - 55; // A=10..Z=35
+        result.push(code);
+        i++;
+      } else {
+        result.push(parseInt(token[i], 10));
+        i++;
+      }
+    }
+    return result;
+  }
+
+  function transformInput(raw: string, mode: InputMode): string {
+    const trimmed = raw.trim();
+    if (!trimmed) return raw;
+    if (trimmed.includes('(') || trimmed.includes(',')) return raw;
+    const tokens = trimmed.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return raw;
+    if (mode === 'bms' || mode === 'upms') return tokens.map((t) => '(' + parseCompactToken(t).join(',') + ')').join('');
+    return tokens.join(',');
+  }
 
 function isTriangularMatrix(matrix: Matrix): boolean {
   if (matrix.length < 3) return false;
@@ -76,6 +97,8 @@ export function useAnalysis(
   sugarEnabled: Ref<boolean>,
   bmsDisplayMode: Ref<BmsDisplayMode>,
   upmsDisplayMode: Ref<UpmsDisplayMode>,
+  bmsCompactStyle: Ref<BmsCompactStyle>,
+  upmsCompactStyle: Ref<BmsCompactStyle>,
   bmsInputPref: Ref<BmsInputPreference>,
 ) {
   const ordinalHtml = ref('');
@@ -126,6 +149,13 @@ export function useAnalysis(
     return (r as any)[key] || null;
   }
 
+  function formatCompactVal(n: number, style: BmsCompactStyle): string {
+    if (n >= 36) return `\\{${n}\\}`;
+    if (style === 'brace' && n >= 10) return `\\{${n}\\}`;
+    if (style === 'alpha' && n >= 10) return String.fromCharCode(55 + n); // A=10..Z=35
+    return String(n);
+  }
+
   function renderBms(raw: string): string {
     if (raw === '(empty)' || raw === '(error)') return raw;
     const aligned = alignMatrixStr(raw);
@@ -135,10 +165,11 @@ export function useAnalysis(
     }
     if (bmsDisplayMode.value === 'compact') {
       const matrix = parseMatrix(aligned);
+      const style = bmsCompactStyle.value;
       const compact = matrix.map(col => {
         const values = [...col];
         while (values.length > 1 && values[values.length - 1] === 0) values.pop();
-        return values.join('');
+        return values.map(v => formatCompactVal(v, style)).join('');
       }).join(' ');
       return katex.renderToString('\\text{' + compact + '}', { throwOnError: false });
     }
@@ -158,10 +189,11 @@ function renderUpms(raw: string): string {
     }
     if (upmsDisplayMode.value === 'compact') {
       const matrix = parseMatrix(aligned);
+      const style = upmsCompactStyle.value;
       const compact = matrix.map(col => {
         const values = [...col];
         while (values.length > 1 && values[values.length - 1] === 0) values.pop();
-        return values.join('');
+        return values.map(v => formatCompactVal(v, style)).join('');
       }).join(' ');
       return katex.renderToString('\\text{' + compact + '}', { throwOnError: false });
     }
@@ -773,7 +805,13 @@ function renderUpms(raw: string): string {
   watch(bmsDisplayMode, () => {
     if (bmsRaw.value) bmsHtml.value = renderBms(bmsRaw.value);
   });
+  watch(bmsCompactStyle, () => {
+    if (bmsRaw.value) bmsHtml.value = renderBms(bmsRaw.value);
+  });
   watch(upmsDisplayMode, () => {
+    if (upmsRaw.value) upmsHtml.value = renderUpms(upmsRaw.value);
+  });
+  watch(upmsCompactStyle, () => {
     if (upmsRaw.value) upmsHtml.value = renderUpms(upmsRaw.value);
   });
 

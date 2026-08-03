@@ -65,7 +65,11 @@ function getBocfWorker(): Promise<Worker> {
 }
 
 export function parseMatrix(input: string): Matrix {
-  let cleaned = input.replace(/[^\(\)（），,\d]/g, '');
+  // Expand multi-digit compact notation before cleaning
+  let expanded = input
+    .replace(/\{(\d+)\}/g, (_, d) => d)  // {10} → 10
+    .replace(/[a-zA-Z]/g, (c) => String(c.toUpperCase().charCodeAt(0) - 55)); // A→10, a→10, etc.
+  let cleaned = expanded.replace(/[^\(\)（），,\d]/g, '');
   cleaned = cleaned.replace(/[（]/g, '(');
   cleaned = cleaned.replace(/[）]/g, ')');
   cleaned = cleaned.replace(/[，]/g, ',');

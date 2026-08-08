@@ -15,6 +15,10 @@ export default defineConfig({
   },
   server: {
     open: true,
+    watch: {
+      // Avoid watching the Rust build tree (huge; exhausts inotify watchers).
+      ignored: ['**/src/rust/target/**', '**/target/**'],
+    },
   },
   worker: {
     format: 'es',

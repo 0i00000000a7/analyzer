@@ -5,6 +5,7 @@ use bms_core::bms::{bms_to_bocf, is_eq_ebo, is_gte_ebo, is_standard_matrix, is_s
 use bms_core::expand::{expand_bms, matrix_lex_order};
 use bms_core::one_y::build_1y_mountain_with_rows;
 use bms_core::parser::{bocf_to_bms, eval_ast, eval_raw_ast, parse_bocf};
+use bms_core::sss::{expand_sss, sss_to_bocf};
 use bms_core::term::*;
 use bms_core::triangular::{bms_to_triangular, triangular_to_bms};
 use bms_core::wy::{
@@ -418,6 +419,53 @@ pub fn expand_wy_js(seq: JsValue, fs: i32) -> JsValue {
     vec_to_js_seq(&expand_wy_seq(&js_seq_to_vec(&seq), fs))
 }
 
+#[wasm_bindgen(js_name = "sssExpand")]
+pub fn sss_expand_js(seq: JsValue, fs: i32) -> JsValue {
+    vec_to_js_seq(&expand_sss(&js_seq_to_vec(&seq), fs))
+}
+
+/// Convert an SSS sequence (array) into its BOCF ordinal, rendered as
+/// ψ-simple LaTeX. Returns `!<error>` on failure.
+#[wasm_bindgen(js_name = "sssToBocf")]
+pub fn sss_to_bocf_js(seq: JsValue) -> String {
+    let s = js_seq_to_vec(&seq);
+    if s.is_empty() || s[0] != 0 {
+        return "!first element must be 0".to_string();
+    }
+    if s.windows(2).any(|w| w[1] < 0 || w[1] > w[0] + 1) {
+        return "!invalid SSS sequence".to_string();
+    }
+    term_to_string(true, &sss_to_bocf(&s))
+}
+
+/// Convert an SSS sequence (array) into its NOCF term, rendered as `p_a(b)`.
+/// Returns `!<error>` on failure.
+#[wasm_bindgen(js_name = "sssToNocf")]
+pub fn sss_to_nocf_js(seq: JsValue) -> String {
+    let s = js_seq_to_vec(&seq);
+    if s.is_empty() || s[0] != 0 {
+        return "!first element must be 0".to_string();
+    }
+    match bms_core::sss::sss_to_nocf(&s) {
+        Ok(n) => n.to_string(),
+        Err(e) => format!("!{}", e),
+    }
+}
+
+/// Convert an SSS sequence (array) into its TPrSS column. Returns
+/// `!<error>` on failure.
+#[wasm_bindgen(js_name = "sssToTprss")]
+pub fn sss_to_tprss_js(seq: JsValue) -> String {
+    let s = js_seq_to_vec(&seq);
+    if s.is_empty() || s[0] != 0 {
+        return "!first element must be 0".to_string();
+    }
+    match bms_core::sss::sss_to_tprss(&s) {
+        Ok(t) => t,
+        Err(e) => format!("!{}", e),
+    }
+}
+
 #[wasm_bindgen(js_name = "oneYToDBMS")]
 pub fn one_y_to_dbms_js(seq: JsValue) -> JsValue {
     matrix_to_js(&one_y_to_dbms(&js_seq_to_vec(&seq)))
@@ -620,6 +668,11 @@ pub fn lprss_is_standard_js(seq: JsValue) -> bool {
     bms_core::seq_std::lprss_is_standard(&js_seq_to_vec(&seq))
 }
 
+#[wasm_bindgen(js_name = "sssIsStandard")]
+pub fn sss_is_standard_js(seq: JsValue) -> bool {
+    bms_core::seq_std::sss_is_standard(&js_seq_to_vec(&seq))
+}
+
 /// PSS hydra standardness: 0 = standard, 1 = not standard but standardizeable
 /// (warn), 2 = not standard even after standardization (block).
 #[wasm_bindgen(js_name = "hydraIsStandard")]
@@ -642,6 +695,93 @@ pub fn expand_hydra_js(input: &str, n: i32) -> Result<String, JsValue> {
 #[wasm_bindgen(js_name = "hprssToHydra")]
 pub fn hprss_to_hydra_js(seq: JsValue) -> String {
     bms_core::hydra::format_hydra_psi(&bms_core::hydra::standardize_hydra(&bms_core::hydra::hprss_to_hydra(&js_seq_to_vec(&seq))))
+}
+
+// ── IHSS Hydra (Mahlo BOCF) ──
+
+/// Analyze an IHSS hydra input (a `(0,0)(1,1)(2,1)` value-matrix string).
+/// Returns { matrix, latex, worm }.
+#[wasm_bindgen(js_name = "ihssAnalyze")]
+pub fn ihss_analyze_js(input: &str) -> JsValue {
+    let obj = js_sys::Object::new();
+    match bms_core::ihss::IHSS::from_string(input) {
+        Err(e) => {
+            js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from(&e)).ok();
+        }
+        Ok(ihss) => {
+            js_sys::Reflect::set(&obj, &JsValue::from("matrix"), &matrix_to_js(&ihss.to_value())).ok();
+            js_sys::Reflect::set(&obj, &JsValue::from("latex"), &JsValue::from(ihss.to_latex())).ok();
+            js_sys::Reflect::set(&obj, &JsValue::from("worm"), &vec_to_js_seq(&ihss.to_worm())).ok();
+            js_sys::Reflect::set(&obj, &JsValue::from("limit"), &JsValue::from(ihss.is_limit())).ok();
+        }
+    }
+    obj.into()
+}
+
+/// Expand an IHSS hydra input by the `n`-th fundamental-sequence step.
+/// `n == 0` drops the last column (successor). Returns the value-matrix string.
+#[wasm_bindgen(js_name = "ihssExpand")]
+pub fn ihss_expand_js(input: &str, n: i32) -> Result<String, JsValue> {
+    let ihss = bms_core::ihss::IHSS::from_string(input)
+        .map_err(|e| JsValue::from(&js_sys::Error::new(&e)))?;
+    let (expanded, _) = ihss.expand(n.max(0), 2, "HMS");
+    Ok(expanded.format())
+}
+
+/// Whether an IHSS hydra value-matrix input is standard. Both the normal and
+/// triangular identity sequences count as standard, mirroring BMS.
+/// Uses the RAW parsed value matrix — not the matrix reconstructed through
+/// `from_value().to_value()`, which can normalize non-standard input.
+#[wasm_bindgen(js_name = "ihssIsStandard")]
+pub fn ihss_is_standard_js(input: &str) -> Result<bool, JsValue> {
+    let value = bms_core::ihss::IHSS::parse(input)
+        .map_err(|e| JsValue::from(&js_sys::Error::new(&e)))?;
+    Ok(bms_core::ihss::IHSS::is_standard_matrix(&value, false)
+        || bms_core::ihss::IHSS::is_standard_matrix(&value, true))
+}
+
+// ── Mahlo BOCF AST ──
+
+/// Parse a Mahlo BOCF expression into an AST. Returns
+/// { ast: <indented tree>, latex: <regenerated LaTeX> } or { error }.
+#[wasm_bindgen(js_name = "mboAst")]
+pub fn mbo_ast_js(input: &str) -> JsValue {
+    let obj = js_sys::Object::new();
+    match bms_core::mbocf::parse_mbocf(input) {
+        Err(e) => {
+            js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from(&e)).ok();
+        }
+        Ok(term) => {
+            js_sys::Reflect::set(&obj, &JsValue::from("ast"), &JsValue::from(term.to_ast_lines().join("\n"))).ok();
+            js_sys::Reflect::set(&obj, &JsValue::from("latex"), &JsValue::from(term.to_latex())).ok();
+        }
+    }
+    obj.into()
+}
+
+/// Reverse-construct an IHSS Hydra value matrix from a Mahlo BOCF expression.
+/// Returns { matrix, latex, ast } or { error }.
+#[wasm_bindgen(js_name = "mbocfToIHSS")]
+pub fn mbocf_to_ihss_js(input: &str) -> JsValue {
+    let obj = js_sys::Object::new();
+    match bms_core::mbocf::parse_mbocf(input) {
+        Err(e) => {
+            js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from(&e)).ok();
+        }
+        Ok(term) => {
+            match term.to_ihss() {
+                Err(e) => {
+                    js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from(&e)).ok();
+                }
+                Ok(ihss) => {
+                    js_sys::Reflect::set(&obj, &JsValue::from("matrix"), &matrix_to_js(&ihss.to_value())).ok();
+                    js_sys::Reflect::set(&obj, &JsValue::from("latex"), &JsValue::from(ihss.to_latex())).ok();
+                    js_sys::Reflect::set(&obj, &JsValue::from("format"), &JsValue::from(ihss.format())).ok();
+                }
+            }
+        }
+    }
+    obj.into()
 }
 
 #[wasm_bindgen(js_name = "hydraToHPRSS")]

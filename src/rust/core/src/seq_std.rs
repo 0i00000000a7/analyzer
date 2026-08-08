@@ -119,3 +119,9 @@ pub fn hprss_is_standard(s: &[i32]) -> bool {
 pub fn lprss_is_standard(s: &[i32]) -> bool {
     is_standard_sequence(s, crate::hydra::expand_lprss)
 }
+
+/// SSS standardness. Converts the 0-based sequence to 1-based first.
+pub fn sss_is_standard(s: &[i32]) -> bool {
+    let s1: Vec<i32> = s.iter().map(|&x| x + 1).collect();
+    is_standard_sequence(&s1, crate::sss::expand_sss)
+}

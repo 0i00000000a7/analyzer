@@ -170,6 +170,25 @@ span {
   padding: 1px 6px;
 }
 
+.lang-btn {
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--fg);
+  cursor: pointer;
+  padding: 1px 6px;
+  font-size: 10pt;
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+.lang-btn.active {
+  background: var(--btn-active-bg);
+  border-color: var(--btn-active-border);
+  font-weight: bold;
+}
+.lang-btn:hover {
+  background: var(--btn-hover);
+}
+
 #theme-toggle {
   position: fixed;
   top: 8px;

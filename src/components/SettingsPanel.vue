@@ -2,22 +2,23 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import { useI18n } from '../composables/useI18n';
 import katex from 'katex';
-import type { VeblenMode, BocfDisplayMode, BmsDisplayMode, UpmsDisplayMode, BmsCompactStyle, BmsInputPreference, MboDisplayMode, MboCompactStyle } from '../composables/useAnalysis';
+import type { VeblenMode, BocfDisplayMode, LmnDisplayMode, BmsDisplayMode, UpmsDisplayMode, BmsCompactStyle, BmsInputPreference, MboDisplayMode, MboCompactStyle } from '../composables/useAnalysis';
 
 const { t, locale, setLocale } = useI18n();
 
 const veblenMode = defineModel<VeblenMode>('veblenMode', { required: true });
 const sugarEnabled = defineModel<boolean>('sugarEnabled', { required: true });
 const bocfDisplayMode = defineModel<BocfDisplayMode>('bocfDisplayMode', { required: true });
+const lmnDisplayMode = defineModel<LmnDisplayMode>('lmnDisplayMode', { required: true });
 const bmsDisplayMode = defineModel<BmsDisplayMode>('bmsDisplayMode', { required: true });
 const upmsDisplayMode = defineModel<UpmsDisplayMode>('upmsDisplayMode', { required: true });
 const bmsCompactStyle = defineModel<BmsCompactStyle>('bmsCompactStyle', { required: true });
 const upmsCompactStyle = defineModel<BmsCompactStyle>('upmsCompactStyle', { required: true });
 const bmsInputPref = defineModel<BmsInputPreference>('bmsInputPref', { required: true });
-const enableMBOcf = defineModel<boolean>('enableMBOcf', { required: true });
 const mboDisplayMode = defineModel<MboDisplayMode>('mboDisplayMode', { required: true });
 const mboCompactStyle = defineModel<MboCompactStyle>('mboCompactStyle', { required: true });
 const mboSugar = defineModel<boolean>('mboSugar', { required: true });
+const nocfSugar = defineModel<boolean>('nocfSugar', { required: true });
 
 const open = ref(false);
 const containerRef = ref<HTMLDivElement | null>(null);
@@ -54,6 +55,11 @@ const veblenMHtml = katex.renderToString('\\begin{smallmatrix}\\alpha\\\\\\beta\
         <button class="mode-btn" :class="{ active: bocfDisplayMode === 'psi' }" @click="bocfDisplayMode = 'psi'">{{ t('settings.bocf.psiRaw') }}</button>
       </div>
       <div class="settings-row">
+        <span class="label">LMN</span>
+        <button class="mode-btn" :class="{ active: lmnDisplayMode === 'full' }" @click="lmnDisplayMode = 'full'">{{ t('settings.lmn.full') }}</button>
+        <button class="mode-btn" :class="{ active: lmnDisplayMode === 'simple' }" @click="lmnDisplayMode = 'simple'">{{ t('settings.lmn.simple') }}</button>
+      </div>
+      <div class="settings-row">
         <span class="label">BMS</span>
         <button class="mode-btn" :class="{ active: bmsDisplayMode === 'matrix' }" @click="bmsDisplayMode = 'matrix'">{{ t('settings.display.matrix') }}</button>
         <button class="mode-btn" :class="{ active: bmsDisplayMode === 'flat' }" @click="bmsDisplayMode = 'flat'">{{ t('settings.display.flat') }}</button>
@@ -80,13 +86,7 @@ const veblenMHtml = katex.renderToString('\\begin{smallmatrix}\\alpha\\\\\\beta\
         <button class="mode-btn" :class="{ active: bmsInputPref === 'normal' }" @click="bmsInputPref = 'normal'">{{ t('settings.inputPref.normal') }}</button>
         <button class="mode-btn" :class="{ active: bmsInputPref === 'triangular' }" @click="bmsInputPref = 'triangular'">{{ t('settings.inputPref.triangular') }}</button>
       </div>
-      <div class="settings-section">{{ t('settings.section.experimental') }}</div>
       <div class="settings-row">
-        <label class="settings-label">
-          <input type="checkbox" v-model="enableMBOcf" /> {{ t('settings.mboEnable') }}
-        </label>
-      </div>
-      <div v-if="enableMBOcf" class="settings-row">
         <span class="label">IHSS</span>
         <button class="mode-btn" :class="{ active: mboDisplayMode === 'matrix' }" @click="mboDisplayMode = 'matrix'">{{ t('settings.display.matrix') }}</button>
         <button class="mode-btn" :class="{ active: mboDisplayMode === 'flat' }" @click="mboDisplayMode = 'flat'">{{ t('settings.display.flat') }}</button>
@@ -97,6 +97,12 @@ const veblenMHtml = katex.renderToString('\\begin{smallmatrix}\\alpha\\\\\\beta\
         </template>
         <label class="settings-label">
           <input type="checkbox" v-model="mboSugar" /> {{ t('settings.mboSugar') }}
+        </label>
+      </div>
+      <div class="settings-row">
+        <span class="label">NOCF</span>
+        <label class="settings-label">
+          <input type="checkbox" v-model="nocfSugar" /> {{ t('settings.sugar') }}
         </label>
       </div>
       <div class="settings-section">{{ t('lang') }}</div>

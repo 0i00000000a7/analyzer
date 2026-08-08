@@ -241,6 +241,17 @@ export async function termToPsiSimple(term: any[]): Promise<string> {
   return wasmModule.termToPsiSimple(term);
 }
 
+/** Convert an ordinal term (JS array) to LMN (Lifting M-Notation) forms */
+export async function termToLmn(term: any[]): Promise<{
+  p: string;
+  pSimple: string;
+  bracket: string;
+  full: string;
+}> {
+  await ensureLoaded();
+  return wasmModule.termToLmn(term);
+}
+
 export async function fundamentalSequence(term: any[], n: number): Promise<{ term: string; termJS: any[] }> {
   await ensureLoaded();
   return wasmModule.fundamentalSequence(term, n);

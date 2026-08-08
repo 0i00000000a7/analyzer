@@ -8,6 +8,7 @@ const props = defineProps<{
   inputMode: InputMode;
   ordinalHtml: string;
   veblenHtml: string;
+  lmnHtml: string;
   zeroYHtml: string;
   dbmsHtml: string;
   bmsHtml: string;
@@ -21,6 +22,9 @@ const props = defineProps<{
   mboAstHtml: string;
   sssNocfHtml: string;
   sssTprssHtml: string;
+  nocfHtml: string;
+  mocfHtml: string;
+  bocfMocfHtml: string;
   showDbmsRow: boolean;
   showBmsRow: boolean;
   showTriangularRow: boolean;
@@ -80,10 +84,31 @@ function copyText(e: MouseEvent, label: string) {
 <template>
   <div style="display: inline-flex; flex-direction: column; align-items: flex-start; margin: 0 auto">
     <!-- BOCF / Ordinal output -->
-    <div data-row="ordinal" style="display: flex; align-items: baseline; gap: 8px">
-      <span class="label" style="font-size: 12pt; width: 70px; text-align: right; cursor: pointer" @click="copyText($event, 'ordinal')" :title="t('output.copy')">BOCF</span>
+    <div data-row="bocf" style="display: flex; align-items: baseline; gap: 8px">
+      <span class="label" style="font-size: 12pt; width: 70px; text-align: right; cursor: pointer" @click="copyText($event, 'bocf')" :title="t('output.copy')">BOCF</span>
       <span data-content style="font-size: 16pt" v-html="props.ordinalHtml"></span>
-      <span v-if="copiedRow === 'ordinal'" class="muted" style="font-size: 9pt">{{ t('output.copied') }}</span>
+      <span v-if="copiedRow === 'bocf'" class="muted" style="font-size: 9pt">{{ t('output.copied') }}</span>
+    </div>
+
+    <!-- NOCF output -->
+    <div v-if="props.inputMode === 'nocf'" data-row="nocf" style="display: flex; align-items: baseline; gap: 8px; margin-top: 8px">
+      <span class="label" style="font-size: 12pt; width: 70px; text-align: right; cursor: pointer" @click="copyText($event, 'nocf')" :title="t('output.copy')">NOCF</span>
+      <span data-content style="font-size: 16pt" v-html="props.nocfHtml"></span>
+      <span v-if="copiedRow === 'nocf'" class="muted" style="font-size: 9pt">{{ t('output.copied') }}</span>
+    </div>
+
+    <!-- MOCF output -->
+    <div v-if="props.inputMode === 'mocf'" data-row="mocf" style="display: flex; align-items: baseline; gap: 8px; margin-top: 8px">
+      <span class="label" style="font-size: 12pt; width: 70px; text-align: right; cursor: pointer" @click="copyText($event, 'mocf')" :title="t('output.copy')">MOCF</span>
+      <span data-content style="font-size: 16pt" v-html="props.mocfHtml"></span>
+      <span v-if="copiedRow === 'mocf'" class="muted" style="font-size: 9pt">{{ t('output.copied') }}</span>
+    </div>
+
+    <!-- BOCF → MOCF conversion output -->
+    <div v-if="props.inputMode === 'bocf' && props.bocfMocfHtml" data-row="bocfMocf" style="display: flex; align-items: baseline; gap: 8px; margin-top: 8px">
+      <span class="label" style="font-size: 12pt; width: 70px; text-align: right; cursor: pointer" @click="copyText($event, 'bocfMocf')" :title="t('output.copy')">MOCF</span>
+      <span data-content style="font-size: 16pt" v-html="props.bocfMocfHtml"></span>
+      <span v-if="copiedRow === 'bocfMocf'" class="muted" style="font-size: 9pt">{{ t('output.copied') }}</span>
     </div>
 
     <!-- Veblen output -->
@@ -91,6 +116,13 @@ function copyText(e: MouseEvent, label: string) {
       <span class="label" style="font-size: 12pt; width: 70px; text-align: right; cursor: pointer" @click="copyText($event, 'veblen')" :title="t('output.copy')">Veblen</span>
       <span data-content style="font-size: 14pt" v-html="props.veblenHtml"></span>
       <span v-if="copiedRow === 'veblen'" class="muted" style="font-size: 9pt">{{ t('output.copied') }}</span>
+    </div>
+
+    <!-- LMN (Lifting M-Notation) output -->
+    <div v-if="props.lmnHtml" data-row="lmn" style="display: flex; align-items: baseline; gap: 8px; margin-top: 8px">
+      <span class="label" style="font-size: 12pt; width: 70px; text-align: right; cursor: pointer" @click="copyText($event, 'lmn')" :title="t('output.copy')">LMN</span>
+      <span data-content class="mono" style="font-size: 12pt" v-html="props.lmnHtml"></span>
+      <span v-if="copiedRow === 'lmn'" class="muted" style="font-size: 9pt">{{ t('output.copied') }}</span>
     </div>
 
     <!-- 0-Y output -->

@@ -1,5 +1,5 @@
 export const en: Record<string, string> = {
-  'app.title': 'BMS analyzer',
+  'app.title': 'Analyzer',
   'lang.en': 'English',
   'lang.zh': '中文',
 
@@ -21,15 +21,17 @@ export const en: Record<string, string> = {
   'placeholder.ihss': 'e.g. 0 11 21 or (0,0)(1,0)(2,1)',
   'placeholder.mbo': 'e.g. ψ_{ψ_M(M)}(ψ_M(M)) or \\psi_M(M)',
   'placeholder.sss': 'e.g. 0,1,2,3',
+  'placeholder.nocf': 'e.g. ψ(0) or ψ_1(0)',
+  'placeholder.mocf': 'e.g. ψ(Ω) or ψ(ψ_Ω(0))',
 
   'settings.toggle': 'Settings',
   'settings.section.appearance': 'Appearance',
   'settings.section.inputPreference': 'Input Preference',
-  'settings.section.experimental': 'Experimental',
-  'settings.mboEnable': 'Mahlo BOCF / IHSS Hydra',
   'settings.sugar': 'Sugar',
   'settings.bocf.normal': 'Normal',
   'settings.bocf.psiRaw': '\u03c8 Raw',
+  'settings.lmn.full': 'Full',
+  'settings.lmn.simple': 'Simple',
   'settings.display.matrix': 'Matrix',
   'settings.display.flat': 'Flat',
   'settings.display.compact': 'Compact',
@@ -50,6 +52,7 @@ export const en: Record<string, string> = {
   'expand.fs': 'fs:',
 
   'mountain.label': 'Mountain',
+  'mountain.download': 'Download',
 
   'theme.toggle': 'Toggle theme',
 

@@ -32,13 +32,15 @@ import { hydraAnalyze, hprssAnalyze, lprssAnalyze, expandHPRSS, expandHydra, bui
 import { ihssAnalyze, ihssExpand, ihssIsStandard } from '../ts/ihss.js';
 import { mboAst, mbocfToIHSS } from '../ts/mbocf.js';
 import { sssExpand, sssToBocf, sssToNocf, sssToTprss, sssIsStandard, parseSSS } from '../ts/sss.js';
-import { hydraIsStandard } from '../ts/bms.js';
+import { nocfAnalyze, nocfExpand, mocfAnalyze, mocfExpand, bocfToMocf, mocfToBocf } from '../ts/ocf.js';
+import { hydraIsStandard, termToLmn } from '../ts/bms.js';
 import { useI18n } from './useI18n';
 import type { AnalysisResult, Matrix, Mountain } from '../ts/types.js';
 
-export type InputMode = 'bms' | '0y' | '1y' | 'wy' | 'bocf' | 'upms' | 'hprss' | 'lprss' | 'hydra' | 'ihss' | 'mbo' | 'sss';
+export type InputMode = 'bms' | '0y' | '1y' | 'wy' | 'bocf' | 'upms' | 'hprss' | 'lprss' | 'hydra' | 'ihss' | 'mbo' | 'sss' | 'nocf' | 'mocf';
 export type VeblenMode = 'v' | 'm';
 export type BocfDisplayMode = 'normal' | 'psi';
+export type LmnDisplayMode = 'full' | 'simple';
 export type BmsDisplayMode = 'matrix' | 'flat' | 'compact';
 export type UpmsDisplayMode = 'matrix' | 'flat' | 'compact';
 export type BmsCompactStyle = 'brace' | 'alpha';
@@ -124,10 +126,13 @@ export function useAnalysis(
   mboDisplayMode: Ref<MboDisplayMode>,
   mboCompactStyle: Ref<MboCompactStyle>,
   mboSugar: Ref<boolean>,
+  nocfSugar: Ref<boolean>,
+  lmnDisplayMode: Ref<LmnDisplayMode>,
 ) {
   const { t } = useI18n();
   const ordinalHtml = ref('');
   const veblenHtml = ref('');
+  const lmnHtml = ref('');
   const zeroYHtml = ref('');
   const dbmsHtml = ref('');
   const bmsHtml = ref('');
@@ -141,6 +146,9 @@ export function useAnalysis(
   const mboAstHtml = ref('');
   const sssNocfHtml = ref('');
   const sssTprssHtml = ref('');
+  const nocfHtml = ref('');
+  const mocfHtml = ref('');
+  const bocfMocfHtml = ref('');
 
   const showDbmsRow = ref(false);
   const showBmsRow = ref(false);
@@ -180,6 +188,8 @@ export function useAnalysis(
   let currentMBOcfLatex = '';
   let currentMboInput = '';
   let currentSSSSeq: number[] | null = null;
+  let currentNocfInput = '';
+  let currentMocfInput = '';
 
   // BOCF conversion state
   const converting = ref(false);
@@ -196,6 +206,31 @@ export function useAnalysis(
 
   function getBocfOutput(r: AnalysisResult, mode: BocfDisplayMode): string | null {
     return mode === 'psi' ? (r.psiSimple || null) : (r.ordinal || null);
+  }
+
+  async function refreshLmnRow(): Promise<void> {
+    const term = lastResult?.ordinalJS;
+    if (!term || term.length === 0) {
+      lmnHtml.value = '';
+      return;
+    }
+    try {
+      const l = await termToLmn(term);
+      if (lmnDisplayMode.value === 'full') {
+        lmnHtml.value = katex.renderToString(l.full, { throwOnError: false });
+      } else {
+        lmnHtml.value = katex.renderToString('\\text{' + l.bracket + '}', { throwOnError: false });
+      }
+    } catch {
+      lmnHtml.value = '';
+    }
+  }
+
+  function renderLmnZero(): void {
+    lmnHtml.value = katex.renderToString(
+      lmnDisplayMode.value === 'full' ? '\\psi_0(0)' : '\\text{0}',
+      { throwOnError: false },
+    );
   }
 
   function formatCompactVal(n: number, style: BmsCompactStyle): string {
@@ -284,6 +319,7 @@ function renderUpms(raw: string): string {
   function clearOutputs() {
     ordinalHtml.value = '';
     veblenHtml.value = '';
+    lmnHtml.value = '';
     zeroYHtml.value = '';
     dbmsHtml.value = '';
     bmsHtml.value = '';
@@ -296,6 +332,9 @@ function renderUpms(raw: string): string {
     mboMatrix.value = '';
     sssNocfHtml.value = '';
     sssTprssHtml.value = '';
+    nocfHtml.value = '';
+    mocfHtml.value = '';
+    bocfMocfHtml.value = '';
     showDbmsRow.value = false;
     showBmsRow.value = false;
     showTriangularRow.value = false;
@@ -396,6 +435,14 @@ function renderUpms(raw: string): string {
         await handleSSS(rawInput);
         return;
       }
+      if (inputMode.value === 'nocf') {
+        await handleNocf(rawInput);
+        return;
+      }
+      if (inputMode.value === 'mocf') {
+        await handleMocf(rawInput);
+        return;
+      }
 
       // BMS mode
       matrix = parseMatrix(rawInput);
@@ -440,6 +487,7 @@ function renderUpms(raw: string): string {
       lastResult = r;
       const bocfOut = getBocfOutput(r, bocfDisplayMode.value);
       ordinalHtml.value = bocfOut ? katex.renderToString(bocfOut, { throwOnError: false }) : '';
+      refreshLmnRow();
       const seq = await bmsTo0YSequence(matrix);
       zeroYHtml.value = seq ? katex.renderToString(seq, { throwOnError: false }) : '';
 
@@ -495,6 +543,13 @@ function renderUpms(raw: string): string {
         const veblenOut = getVeblenOutput(lastResult, veblenMode.value, sugarEnabled.value);
         if (veblenOut) veblenHtml.value = katex.renderToString(veblenOut, { throwOnError: false });
       }
+      refreshLmnRow();
+      const mocf = await bocfToMocf(rawInput);
+      if (mocf.error) {
+        bocfMocfHtml.value = '';
+      } else if (mocf.latex) {
+        bocfMocfHtml.value = katex.renderToString(mocf.latex, { throwOnError: false });
+      }
     }
     showBmsRow.value = true;
     try {
@@ -526,6 +581,7 @@ function renderUpms(raw: string): string {
       lastResult = r;
       const bocfOut = getBocfOutput(r, bocfDisplayMode.value);
       ordinalHtml.value = bocfOut ? katex.renderToString(bocfOut, { throwOnError: false }) : '';
+      refreshLmnRow();
       bmsRaw.value = '';
       bmsHtml.value = '';
       showBmsRow.value = true;
@@ -545,6 +601,7 @@ function renderUpms(raw: string): string {
     const r = await analyze(matrix);
     lastResult = r;
     ordinalHtml.value = katex.renderToString(r.ordinal, { throwOnError: false });
+    refreshLmnRow();
 
     if (r.veblen && !r.gteEBO) {
       const v = getVeblenOutput(r, veblenMode.value, sugarEnabled.value);
@@ -611,17 +668,20 @@ function renderUpms(raw: string): string {
           lastResult = r;
           ordinalHtml.value = katex.renderToString(r.ordinal, { throwOnError: false });
           if (r.veblen) veblenHtml.value = katex.renderToString(r.veblen, { throwOnError: false });
+          refreshLmnRow();
           const seq0y = await bmsTo0YSequence(bms);
           zeroYHtml.value = seq0y ? katex.renderToString(seq0y, { throwOnError: false }) : '';
         } else {
           ordinalHtml.value = katex.renderToString('0', { throwOnError: false });
           veblenHtml.value = katex.renderToString('0', { throwOnError: false });
+          renderLmnZero();
         }
       } else if (hasOmega) {
         // no BMS for omega
       } else {
         ordinalHtml.value = katex.renderToString('0', { throwOnError: false });
         veblenHtml.value = katex.renderToString('0', { throwOnError: false });
+          renderLmnZero();
       }
     } catch {}
   }
@@ -659,17 +719,20 @@ function renderUpms(raw: string): string {
           lastResult = r;
           ordinalHtml.value = katex.renderToString(r.ordinal, { throwOnError: false });
           if (r.veblen) veblenHtml.value = katex.renderToString(r.veblen, { throwOnError: false });
+          refreshLmnRow();
           const seq0y = await bmsTo0YSequence(bms);
           zeroYHtml.value = seq0y ? katex.renderToString(seq0y, { throwOnError: false }) : '';
         } else {
           ordinalHtml.value = katex.renderToString('0', { throwOnError: false });
           veblenHtml.value = katex.renderToString('0', { throwOnError: false });
+          renderLmnZero();
         }
       } else if (hasOmega) {
         // no BMS for omega
       } else {
         ordinalHtml.value = katex.renderToString('0', { throwOnError: false });
         veblenHtml.value = katex.renderToString('0', { throwOnError: false });
+          renderLmnZero();
       }
     } catch {}
   }
@@ -709,6 +772,7 @@ function renderUpms(raw: string): string {
         const r = await analyze(matrix);
         lastResult = r;
         ordinalHtml.value = katex.renderToString(r.ordinal, { throwOnError: false });
+        refreshLmnRow();
 
         if (r.veblen && !r.gteEBO) {
           const v = getVeblenOutput(r, veblenMode.value, sugarEnabled.value);
@@ -962,6 +1026,53 @@ function renderUpms(raw: string): string {
     }
   }
 
+  async function handleNocf(rawInput: string) {
+    if (!rawInput.trim()) return;
+    currentNocfInput = rawInput.trim();
+    const r = await nocfAnalyze(rawInput, nocfSugar.value);
+    if (r.error) {
+      nocfHtml.value = '(error)';
+      return;
+    }
+    nocfHtml.value = katex.renderToString(r.latex ?? '', { throwOnError: false });
+  }
+
+  async function handleMocf(rawInput: string) {
+    if (!rawInput.trim()) return;
+    currentMocfInput = rawInput.trim();
+    const r = await mocfAnalyze(rawInput);
+    if (r.error) {
+      mocfHtml.value = '(error)';
+      ordinalHtml.value = '';
+      return;
+    }
+    mocfHtml.value = katex.renderToString(r.latex ?? '', { throwOnError: false });
+    const b = await mocfToBocf(rawInput);
+    if (b.error) {
+      ordinalHtml.value = '';
+      veblenHtml.value = '';
+      lmnHtml.value = '';
+      return;
+    }
+    const v = await termToVeblen(b.ordinalJS ?? []);
+    lastResult = {
+      gteEBO: false,
+      ordinal: b.latex ?? '',
+      ordinalJS: b.ordinalJS ?? [],
+      psiSimple: b.psiSimple ?? '',
+      ...v,
+      nsForm: '',
+      isStandard: true,
+    } as AnalysisResult;
+    const bocfOut = getBocfOutput(lastResult, bocfDisplayMode.value);
+    ordinalHtml.value = bocfOut ? katex.renderToString(bocfOut, { throwOnError: false }) : '';
+    if (lastResult.veblen) {
+      const veblenOut = getVeblenOutput(lastResult, veblenMode.value, sugarEnabled.value);
+      veblenHtml.value = veblenOut ? katex.renderToString(veblenOut, { throwOnError: false }) : '';
+    }
+    refreshLmnRow();
+  }
+
   // BOCF conversion
   async function convertBocfToBms() {
     converting.value = true;
@@ -1062,6 +1173,14 @@ function renderUpms(raw: string): string {
         if (!currentSSSSeq || currentSSSSeq.length === 0) { expandResult.value = t('status.expand.noSequence'); return; }
         const expanded = await sssExpand(currentSSSSeq, fs);
         expandResult.value = expanded.length > 0 ? expanded.join(',') : '0';
+      } else if (inputMode.value === 'nocf') {
+        if (!currentNocfInput) { expandResult.value = t('status.expand.noSequence'); return; }
+        const expanded = await nocfExpand(currentNocfInput, fs);
+        expandResult.value = katex.renderToString(expanded, { throwOnError: false });
+      } else if (inputMode.value === 'mocf') {
+        if (!currentMocfInput) { expandResult.value = t('status.expand.noSequence'); return; }
+        const expanded = await mocfExpand(currentMocfInput, fs);
+        expandResult.value = katex.renderToString(expanded, { throwOnError: false });
       } else {
         const rawInput = transformInput(inputValue.value, inputMode.value);
         const matrix = parseMatrix(rawInput);
@@ -1118,6 +1237,10 @@ function renderUpms(raw: string): string {
     }
   });
 
+  watch(lmnDisplayMode, () => {
+    refreshLmnRow();
+  });
+
   function forceNonStandardConvert() {
     if (!pendingMatrix.value) return;
     forceNonStandard.value = true;
@@ -1126,8 +1249,8 @@ function renderUpms(raw: string): string {
   }
 
   return {
-    ordinalHtml, veblenHtml, zeroYHtml, dbmsHtml, bmsHtml, triangularHtml, upmsHtml,
-    hydraHtml, hprssHtml, lprssHtml, mboHtml, mboMatrix, mboAstHtml, sssNocfHtml, sssTprssHtml,
+    ordinalHtml, veblenHtml, lmnHtml, zeroYHtml, dbmsHtml, bmsHtml, triangularHtml, upmsHtml,
+    hydraHtml, hprssHtml, lprssHtml, mboHtml, mboMatrix, mboAstHtml, sssNocfHtml, sssTprssHtml, nocfHtml, mocfHtml, bocfMocfHtml,
     showDbmsRow, showBmsRow, showTriangularRow, showUpmsRow, showMountainRow,
     showHydraRow, showHprssRow, showLprssRow, showMboRow, showMboAstRow, showSssNocfRow, showSssTprssRow,
     bmsRaw, mountainType, mountainData, mountainRowLabels,

@@ -1,5 +1,5 @@
 export const zh: Record<string, string> = {
-  'app.title': 'BMS 分析器',
+  'app.title': '分析器',
   'lang.en': 'English',
   'lang.zh': '中文',
 
@@ -21,15 +21,17 @@ export const zh: Record<string, string> = {
   'placeholder.ihss': '例如 0 11 21 或 (0,0)(1,0)(2,1)',
   'placeholder.mbo': '例如 ψ_{ψ_M(M)}(ψ_M(M)) 或 \\psi_M(M)',
   'placeholder.sss': '例如 0,1,2,3',
+  'placeholder.nocf': '例如 ψ(0) 或 ψ_1(0)',
+  'placeholder.mocf': '例如 ψ(Ω) 或 ψ(ψ_Ω(0))',
 
   'settings.toggle': '设置',
   'settings.section.appearance': '外观',
   'settings.section.inputPreference': '输入偏好',
-  'settings.section.experimental': '实验性',
-  'settings.mboEnable': 'Mahlo BOCF / IHSS Hydra',
   'settings.sugar': '简化',
   'settings.bocf.normal': '普通',
   'settings.bocf.psiRaw': '纯 ψ',
+  'settings.lmn.full': '完整',
+  'settings.lmn.simple': '简单',
   'settings.display.matrix': '矩阵',
   'settings.display.flat': '平展',
   'settings.display.compact': '简洁',
@@ -50,6 +52,7 @@ export const zh: Record<string, string> = {
   'expand.fs': '基本列：',
 
   'mountain.label': '山脉图',
+  'mountain.download': '下载',
 
   'theme.toggle': '切换主题',
 

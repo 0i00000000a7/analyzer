@@ -558,6 +558,39 @@ fn sum_without_last(a: &Term) -> Term {
     r
 }
 
+/// Cofinality following BOCF_EBO's convention: `None` for the
+/// successor/zero class ("undefined" in the reference), `Some(cf)`
+/// otherwise. Note this differs from literal cofinality: ψ_v(0) with
+/// successor v yields v, and ψ with a successor argument yields 0.
+fn cof_opt(a: &Term) -> Option<Term> {
+    if is_zero(a) {
+        return None;
+    }
+    let last = last_term(a);
+    let node = last.as_ref().unwrap();
+    let v = &node.a;
+    let arg = &node.b;
+    if is_zero(arg) {
+        if is_zero(v) {
+            return None;
+        }
+        return match cof_opt(v) {
+            None => Some(v.clone()),
+            Some(cf) => Some(cf),
+        };
+    }
+    match cof_opt(arg) {
+        None => Some(zero()),
+        Some(cf) => {
+            if le(&cf, v) {
+                Some(cf)
+            } else {
+                Some(zero())
+            }
+        }
+    }
+}
+
 /// Fundamental sequence α[n] for integer index n.
 pub fn fundamental_sequence(a: &Term, n: i32) -> Term {
     if is_zero(a) {
@@ -572,46 +605,44 @@ pub fn fundamental_sequence(a: &Term, n: i32) -> Term {
     let gamma = node.b.clone();
 
     if is_zero(&gamma) {
-        // ψβ(0)
         if is_zero(&beta) {
             return zero(); // ψ₀(0)[n] = 0
         }
-        let cf_beta = cofinality(&beta);
-        if eq(&cf_beta, &one()) {
-            return from_int(n); // succ β → n
+        if cof_opt(&beta).is_none() {
+            return from_int(n); // successor-class subscript → n
         }
-        return t(fundamental_sequence(&beta, n), zero(), zero()); // limit β → ψβ[n](0)
+        return t(fundamental_sequence(&beta, n), zero(), zero());
     }
 
-    let cf_gamma = cofinality(&gamma);
-    if eq(&cf_gamma, &one()) {
-        // succ argument: ψβ(γ[0]) repeated n times
-        let gamma0 = fundamental_sequence(&gamma, 0);
-        return mul_finite(&t(beta, gamma0, zero()), &from_int(n));
-    }
-
-    // β ≥ Cof(γ): ψβ(γ[n])
-    if !lt(&beta, &cf_gamma) {
-        return t(beta, fundamental_sequence(&gamma, n), zero());
-    }
-
-    // β < Cof(γ): iterate Re for successor cardinals Ω_{δ+1}
-    if !is_zero(&cf_gamma) {
-        let cfn = cf_gamma.as_ref().unwrap();
-        if !is_zero(&cfn.a) && is_succ(&cfn.a) {
-            let delta = sub(&cfn.a, &one());
-            let mut re = zero();
-            for _ in 0..n {
-                re = fundamental_sequence_indexed(&gamma, &t(delta.clone(), re.clone(), zero()));
+    match cof_opt(&gamma) {
+        None => {
+            // successor argument: ψβ(γ[0]) repeated n times
+            let gamma0 = fundamental_sequence(&gamma, 0);
+            mul_finite(&t(beta, gamma0, zero()), &from_int(n))
+        }
+        Some(cf) => {
+            if le(&cf, &beta) {
+                return t(beta, fundamental_sequence(&gamma, n), zero());
             }
-            return t(beta, re, zero());
+            // β < Cof(γ): iterate with ψ_{cf[0]}(result) indices
+            let cf_pred = fundamental_sequence(&cf, 0);
+            let mut result = zero();
+            for _ in 0..n {
+                result = fundamental_sequence_indexed(
+                    &gamma,
+                    &t(cf_pred.clone(), result.clone(), zero()),
+                );
+            }
+            t(beta, result, zero())
         }
     }
-    t(beta, fundamental_sequence(&gamma, n), zero())
 }
 
 /// Fundamental sequence α[β] for ordinal index β.
 pub fn fundamental_sequence_indexed(a: &Term, index: &Term) -> Term {
+    if is_zero(a) {
+        return zero();
+    }
     let last = last_term(a);
     if !eq(&last, a) {
         return add(&sum_without_last(a), &fundamental_sequence_indexed(&last, index));
@@ -627,24 +658,21 @@ pub fn fundamental_sequence_indexed(a: &Term, index: &Term) -> Term {
         if is_zero(&beta) {
             return zero();
         }
-        let cf_beta = cofinality(&beta);
-        if eq(&cf_beta, &one()) {
-            if lt(index, a) {
-                return index.clone();
-            }
-            return zero();
+        if cof_opt(&beta).is_none() {
+            return index.clone();
         }
         return t(fundamental_sequence_indexed(&beta, index), zero(), zero());
     }
 
-    let cf_gamma = cofinality(&gamma);
-    if eq(&cf_gamma, &one()) {
-        return fundamental_sequence(a, length1(index));
+    match cof_opt(&gamma) {
+        None => fundamental_sequence(a, length1(index)),
+        Some(cf) => {
+            if le(&cf, &beta) {
+                return t(beta, fundamental_sequence_indexed(&gamma, index), zero());
+            }
+            fundamental_sequence(a, length1(index))
+        }
     }
-    if !lt(&beta, &cf_gamma) {
-        return t(beta, fundamental_sequence_indexed(&gamma, index), zero());
-    }
-    fundamental_sequence(a, length1(index))
 }
 
 // ============================================================
@@ -1540,79 +1568,56 @@ pub fn term_to_string(_latex: bool, q: &Term) -> String {
     render_term(q)
 }
 
-/// Render a Term in raw ψ_a(b)+c form without Ω-power decomposition.
-/// Simplifications: ψ_0(1) = ω, ψ_a(0) = Ω_a, finite ordinals as numbers.
-/// Everything else stays as ψ_a(b)+c.
+/// Render a Term in raw ψ form (LaTeX). Simplifications:
+/// natural numbers as digits, ψ_α(0) = Ω_α, ψ_0 written as ψ,
+/// and runs of identical summands merged as ordinal products (ω+ω → ω2).
 pub fn term_to_psi_simple(q: &Term) -> String {
-    term_to_psi_simple_cached(q, &mut HashMap::new())
-}
-
-fn term_to_psi_simple_cached(q: &Term, cache: &mut HashMap<usize, String>) -> String {
     if is_zero(q) {
         return "0".to_string();
     }
     if is_ordinal_finite(q) {
         return length1(q).to_string();
     }
-    let key = q.as_ref().map(|n| n.id).unwrap_or(0);
-    if let Some(s) = cache.get(&key) {
-        return s.clone();
-    }
-
-    let (a_part, b_part) = separate(q, &first_term(q));
-    let a0 = a_part.as_ref().unwrap().a.clone();
-    let a1 = a_part.as_ref().unwrap().b.clone();
-
-    // ψ_0(1) = ω
-    if is_zero(&a0) && eq(&a1, &one()) {
-        cache.insert(key, "\\omega".to_string());
-        return "\\omega".to_string();
-    }
-
-    // ψ_a(0) = Ω_a
-    if is_zero(&a1) {
-        let s = omega_str(&a0);
-        if !is_zero(&b_part) {
-            let result = format!("{}+{}", s, term_to_psi_simple_cached(&b_part, cache));
-            cache.insert(key, result.clone());
-            return result;
+    let mut result = String::new();
+    let mut cur = q.clone();
+    while !is_zero(&cur) {
+        let head = first_term(&cur);
+        let (run, rest) = separate(&cur, &head);
+        let count = length1(&run);
+        let mut part = psi_simple_head(&head);
+        if count > 1 {
+            part.push_str(&count.to_string());
         }
-        cache.insert(key, s.clone());
-        return s;
-    }
-
-    // ψ_0(b) = ψ(b)
-    let m = if is_zero(&a0) {
-        format!(
-            "\\psi\\left({}\\right)",
-            term_to_psi_simple_cached(&a1, cache)
-        )
-    } else {
-        format!(
-            "\\psi_{{{}}}\\left({}\\right)",
-            term_to_psi_simple_cached(&a0, cache),
-            term_to_psi_simple_cached(&a1, cache)
-        )
-    };
-
-    let len = length1(&a_part);
-    if len > 1 {
-        let result = format!("{}{}", m, len);
-        if !is_zero(&b_part) {
-            let result = format!("{}+{}", result, term_to_psi_simple_cached(&b_part, cache));
-            cache.insert(key, result.clone());
-            return result;
+        if !result.is_empty() {
+            result.push('+');
         }
-        cache.insert(key, result.clone());
-        return result;
+        result.push_str(&part);
+        cur = rest;
     }
-    if !is_zero(&b_part) {
-        let result = format!("{}+{}", m, term_to_psi_simple_cached(&b_part, cache));
-        cache.insert(key, result.clone());
-        return result;
+    result
+}
+
+fn psi_simple_head(p: &Term) -> String {
+    let node = p.as_ref().unwrap();
+    let a = &node.a;
+    let b = &node.b;
+    if is_zero(b) {
+        if is_zero(a) {
+            return "1".to_string(); // ψ_0(0) = 1
+        }
+        if eq(a, &one()) {
+            return "\\Omega".to_string();
+        }
+        return format!("\\Omega_{{{}}}", term_to_psi_simple(a));
     }
-    cache.insert(key, m.clone());
-    m
+    if is_zero(a) {
+        return format!("\\psi\\left({}\\right)", term_to_psi_simple(b));
+    }
+    format!(
+        "\\psi_{{{}}}\\left({}\\right)",
+        term_to_psi_simple(a),
+        term_to_psi_simple(b)
+    )
 }
 
 // Debug wrappers
@@ -1622,4 +1627,67 @@ pub fn debug_decompose_power(a: &Term) -> (Term, Term) {
 
 pub fn debug_compute_t(alpha: &Term) -> Term {
     compute_t(alpha)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::{eval_ast, parse_bocf};
+
+    fn eval(input: &str) -> Term {
+        eval_ast(&parse_bocf(input).expect("parse")).expect("eval")
+    }
+
+    #[test]
+    fn fs_psi_omega_cubed() {
+        // ψ(Ω^3)[3] = ψ₀(ψ₁(Ω + ψ₀(ψ₁(Ω + ψ₀(ψ₁(Ω + 1))))))
+        let a = eval("ψ(Ω^3)");
+        let r = fundamental_sequence(&a, 3);
+        let p1 = t(one(), add(&omega1(), &one()), zero()); // ψ₁(Ω+1)
+        let q1 = t(zero(), p1.clone(), zero());
+        let p2 = t(one(), add(&omega1(), &q1), zero());
+        let q2 = t(zero(), p2.clone(), zero());
+        let p3 = t(one(), add(&omega1(), &q2), zero());
+        let expected = t(zero(), p3, zero());
+        assert!(
+            eq(&r, &expected),
+            "got {}",
+            term_to_string(false, &r)
+        );
+    }
+
+    #[test]
+    fn fs_epsilon_zero() {
+        // ψ₀(Ω)[3] = ψ₀(ψ₀(ψ₀(1)))
+        let a = t(zero(), omega1(), zero());
+        let r = fundamental_sequence(&a, 3);
+        let one_ = one();
+        let q1 = t(zero(), one_, zero());
+        let q2 = t(zero(), q1.clone(), zero());
+        let expected = t(zero(), q2, zero());
+        assert!(
+            eq(&r, &expected),
+            "got {}",
+            term_to_string(false, &r)
+        );
+    }
+
+    #[test]
+    fn psi_simple_display() {
+        assert_eq!(term_to_psi_simple(&zero()), "0");
+        assert_eq!(term_to_psi_simple(&from_int(3)), "3");
+        assert_eq!(term_to_psi_simple(&omega1()), "\\Omega");
+        // runs of identical summands merge as ordinal products
+        let omega2 = add(&omega1(), &omega1());
+        assert_eq!(term_to_psi_simple(&omega2), "\\Omega2");
+        let w2 = add(&omega(), &omega());
+        assert_eq!(term_to_psi_simple(&w2), "\\psi\\left(1\\right)2");
+        assert_eq!(term_to_psi_simple(&add(&w2, &one())), "\\psi\\left(1\\right)2+1");
+        let e = eval("ψ(Ω^3)");
+        let r = fundamental_sequence(&e, 3);
+        assert_eq!(
+            term_to_psi_simple(&r),
+            "\\psi\\left(\\psi_{1}\\left(\\Omega+\\psi\\left(\\psi_{1}\\left(\\Omega+\\psi\\left(\\psi_{1}\\left(\\Omega+1\\right)\\right)\\right)\\right)\\right)\\right)"
+        );
+    }
 }

@@ -414,14 +414,14 @@ fn eval_pow_term(base: &Term, exponent: &Term) -> Result<Term, String> {
 
     // ω^α: use exp function
     if eq(base, &omega()) {
-        return Ok(exp(exponent));
+        return Ok(standard_form(&exp(exponent)));
     }
 
     // (ω^β)^α: every Ω_a is a power of ω
     if !is_zero(base) {
         let bn = base.as_ref().unwrap();
         if is_zero(&bn.c) {
-            return Ok(exp(&mul(&log(base), exponent)));
+            return Ok(standard_form(&exp(&mul(&log(base), exponent))));
         }
     }
 
@@ -495,6 +495,44 @@ pub fn eval_raw_ast(ast: &Ast) -> Result<Term, String> {
             let exp = eval_raw_ast(e)?;
             eval_pow_term(&base, &exp)
         }
+    }
+}
+
+/// Detect ascending (non-standard) sums anywhere in the expression.
+/// Evaluation can mask such sums when they sit inside pow/mul operands
+/// (e.g. ψ(Ω^(1+Ω))), so this walks the AST syntactically.
+fn has_ascending_add(ast: &Ast) -> bool {
+    match ast {
+        Ast::Num(_) | Ast::W => false,
+        Ast::Omega(sub) => sub.as_ref().map_or(false, |s| has_ascending_add(s)),
+        Ast::Psi(sub, arg) => {
+            sub.as_ref().map_or(false, |s| has_ascending_add(s)) || has_ascending_add(arg)
+        }
+        Ast::Add(l, r) => {
+            if let (Ok(lv), Ok(rv)) = (eval_raw_ast(l), eval_raw_ast(r)) {
+                if lt(&last_term(&lv), &first_term(&rv)) {
+                    return true;
+                }
+            }
+            has_ascending_add(l) || has_ascending_add(r)
+        }
+        Ast::Mul(l, r) | Ast::Pow(l, r) => has_ascending_add(l) || has_ascending_add(r),
+    }
+}
+
+/// Standardness of a parsed input expression.
+/// Combines the term-level check on the raw eval with the syntactic AST sum
+/// check, since normalization inside eval can hide ascending sub-sums.
+pub fn bocf_input_standardness(ast: &Ast) -> BocfStandardness {
+    let raw = match eval_raw_ast(ast) {
+        Ok(t) => t,
+        Err(_) => return BocfStandardness::NonStandard,
+    };
+    let cs = check_bocf_standardness(&raw);
+    if cs == BocfStandardness::Standard && has_ascending_add(ast) {
+        BocfStandardness::NonStandardButNormalizable
+    } else {
+        cs
     }
 }
 

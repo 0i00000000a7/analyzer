@@ -11,6 +11,7 @@
 //! is ported here.
 
 use crate::term::{add, eq, exp, is_zero, last_term, log, one, t, zero, Term};
+use crate::ocf::{Nocf, nocf_to_sss_string};
 
 /// Lexicographic order on two integer sequences.
 /// Returns 1 if `a > b`, -1 if `a < b`, 0 if equal. A shorter sequence that
@@ -432,62 +433,8 @@ pub fn sss_to_bocf(seq: &[i32]) -> Term {
 }
 
 // ════════════════════════════════════════════════════════════════
-// NOCF
+// NOCF (Nocf type lives in crate::ocf)
 // ════════════════════════════════════════════════════════════════
-
-/// A NOCF term: a natural number, or `p_a(b)` (ψ_a(b)). Simpler than BOCF in
-/// that there is no trailing `+c` summand.
-#[derive(Clone, Debug)]
-pub enum Nocf {
-    Nat(u32),
-    P { a: Box<Nocf>, b: Box<Nocf> },
-}
-
-impl Nocf {
-    pub fn p(a: Nocf, b: Nocf) -> Nocf {
-        Nocf::P {
-            a: Box::new(a),
-            b: Box::new(b),
-        }
-    }
-
-    pub fn to_string(&self) -> String {
-        match self {
-            Nocf::Nat(k) => k.to_string(),
-            Nocf::P { a, b } => {
-                match (a.as_ref(), b.as_ref()) {
-                    // ψ_0(0) = 1
-                    (Nocf::Nat(0), Nocf::Nat(0)) => "1".to_string(),
-                    // ψ_0(α) = ψ(α)  (no subscript)
-                    (Nocf::Nat(0), _) => format!("\\psi\\left({}\\right)", b.to_string()),
-                    // ψ_α(0) = Ω_α
-                    (_, Nocf::Nat(0)) => {
-                        let sub = a.to_string();
-                        if sub == "1" {
-                            "\\Omega".to_string()
-                        } else {
-                            format!("\\Omega_{{{}}}", sub)
-                        }
-                    }
-                    // ψ_α(β) = Ω_α + β
-                    _ => {
-                        let sub = a.to_string();
-                        let omega = if sub == "1" {
-                            "\\Omega".to_string()
-                        } else {
-                            format!("\\Omega_{{{}}}", sub)
-                        };
-                        format!("{}+{}", omega, b.to_string())
-                    }
-                }
-            }
-        }
-    }
-
-    fn is_nat(&self, k: u32) -> bool {
-        matches!(self, Nocf::Nat(n) if *n == k)
-    }
-}
 
 fn is_num_token(t: &str) -> bool {
     !t.is_empty() && t.chars().all(|c| c.is_ascii_digit())
@@ -623,7 +570,7 @@ pub fn sss_to_nocf(seq: &[i32]) -> Result<Nocf, String> {
         }
     };
     if ge_01 {
-        Ok(Nocf::p(Nocf::Nat(0), inner))
+        Ok(Nocf::psi(Nocf::Zero, inner))
     } else {
         Ok(inner)
     }
@@ -682,17 +629,17 @@ fn parse_w_node(chars: &[char], pos: &mut usize) -> Result<Nocf, String> {
         .collect::<String>()
         .parse()
         .map_err(|_| "bad number in W-number".to_string())?;
-    Ok(Nocf::Nat(n))
+    Ok(Nocf::from_nat(n as i32))
 }
 
 fn w_params_to_nocf(params: Vec<Nocf>) -> Nocf {
     match params.len() {
-        0 => Nocf::Nat(0),
-        1 => Nocf::p(Nocf::Nat(0), params[0].clone()),
+        0 => Nocf::Zero,
+        1 => Nocf::psi(Nocf::Zero, params[0].clone()),
         n => {
             let arg = params[n - 1].clone();
             let sub = params[0].clone();
-            Nocf::p(sub, arg)
+            Nocf::psi(sub, arg)
         }
     }
 }
@@ -715,38 +662,28 @@ pub fn sss_to_tprss(seq: &[i32]) -> Result<String, String> {
 
 /// Convert a NOCF tree to its TPrSS column string.
 fn nocf_to_tprss(nocf: &Nocf) -> String {
-    match nocf {
-        // A bare-natural root is rewritten by `generateNOCF5`'s whole-number
-        // special case: n ↦ p(p(...0...)) with n nesting levels.
-        Nocf::Nat(k) => convert_node(&g5(*k)),
-        other => convert_node(other),
-    }
-}
-
-/// `generateNOCF5`'s expansion of a natural number n>0 into n nested `p(0)`s.
-fn g5(k: u32) -> Nocf {
-    if k == 0 {
-        Nocf::Nat(0)
-    } else {
-        Nocf::p(Nocf::Nat(0), g5(k - 1))
-    }
+    convert_node(nocf)
 }
 
 /// `convertNode` from `sss.js`, applied to the NOCF tree after `generateNOCF5`.
 fn convert_node(nocf: &Nocf) -> String {
     match nocf {
-        Nocf::Nat(k) => k.to_string(),
-        Nocf::P { a, b } => {
+        Nocf::Zero => "0".to_string(),
+        Nocf::Psi(v, a) => {
             let mut elements: Vec<String> = Vec::new();
-            // Subscript: a bare natural is emitted as-is (`generateNOCF5` only
-            // rewrites parenthesized numbers), a ψ is emitted as a nested tuple.
-            match a.as_ref() {
-                Nocf::Nat(k) => elements.push(k.to_string()),
-                other => elements.push(convert_node(other)),
+            // Subscript: emit its value as-is (natural numbers are displayed
+            // as numbers, ψ terms are emitted as nested tuples).
+            match v.as_ref() {
+                Nocf::Zero => elements.push("0".to_string()),
+                other => {
+                    let n = other.to_nat();
+                    if n >= 0 { elements.push(n.to_string()); }
+                    else { elements.push(convert_node(other)); }
+                }
             }
             // Argument: skip zero, otherwise expand/convert and flatten.
-            match b.as_ref() {
-                Nocf::Nat(0) => {}
+            match a.as_ref() {
+                Nocf::Zero => {}
                 other => {
                     for el in flatten_tprss(&arg_converted(other)) {
                         elements.push(el);
@@ -758,12 +695,25 @@ fn convert_node(nocf: &Nocf) -> String {
     }
 }
 
-/// Convert a non-zero NOCF argument, expanding a bare natural via `g5`.
+/// Convert a NOCF argument, expanding natural numbers via the `generateNOCF5`
+/// scheme (nested ψ's).
 fn arg_converted(nocf: &Nocf) -> String {
     match nocf {
-        Nocf::Nat(0) => "0".to_string(),
-        Nocf::Nat(k) => convert_node(&g5(*k)),
-        other => convert_node(other),
+        Nocf::Zero => "0".to_string(),
+        other => {
+            let n = other.to_nat();
+            if n >= 0 { convert_node(&g5(n as u32)) }
+            else { convert_node(other) }
+        }
+    }
+}
+
+/// `generateNOCF5`'s expansion of a natural number n>0 into n nested `p(0)`s.
+fn g5(k: u32) -> Nocf {
+    if k == 0 {
+        Nocf::Zero
+    } else {
+        Nocf::psi(Nocf::Zero, g5(k - 1))
     }
 }
 
@@ -864,8 +814,9 @@ mod tests {
             (&[0, 1, 2, 2], "\\psi\\left(\\Omega_{\\Omega_{2}}\\right)"),
         ];
         for (s, expected) in cases {
-            let got = sss_to_nocf(s).expect("no conversion error").to_string();
-            assert_eq!(&got, expected, "SSS {:?}", s);
+            let got = sss_to_nocf(s).expect("no conversion error");
+            let got_str = nocf_to_sss_string(&got);
+            assert_eq!(&got_str, expected, "SSS {:?}", s);
         }
     }
 

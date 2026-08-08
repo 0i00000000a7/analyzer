@@ -1,6 +1,6 @@
 {
   "name": "bms-analyzer",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "description": "BMS to ordinal analyzer — Rust/WASM core with Vite + TypeScript",
   "type": "module",

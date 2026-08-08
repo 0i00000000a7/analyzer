@@ -4,7 +4,7 @@
 use bms_core::bms::{bms_to_bocf, is_eq_ebo, is_gte_ebo, is_standard_matrix, is_standard_triangular_matrix};
 use bms_core::expand::{expand_bms, matrix_lex_order};
 use bms_core::one_y::build_1y_mountain_with_rows;
-use bms_core::parser::{bocf_to_bms, eval_ast, eval_raw_ast, parse_bocf};
+use bms_core::parser::{bocf_to_bms, eval_ast, parse_bocf};
 use bms_core::sss::{expand_sss, sss_to_bocf};
 use bms_core::term::*;
 use bms_core::triangular::{bms_to_triangular, triangular_to_bms};
@@ -290,8 +290,7 @@ pub fn parse_and_eval_bocf_js(input: &str) -> JsValue {
 #[wasm_bindgen(js_name = "bocfIsStandard")]
 pub fn bocf_is_standard_js(input: &str) -> Result<i32, JsValue> {
     let ast = parse_bocf(input).map_err(|e| JsValue::from(&js_sys::Error::new(&e)))?;
-    let raw = eval_raw_ast(&ast).map_err(|e| JsValue::from(&js_sys::Error::new(&e)))?;
-    Ok(bms_core::term::check_bocf_standardness(&raw) as i32)
+    Ok(bms_core::parser::bocf_input_standardness(&ast) as i32)
 }
 
 #[wasm_bindgen(js_name = "expandBMS")]
@@ -323,6 +322,17 @@ pub fn term_to_veblen_js(term: JsValue) -> JsValue {
 #[wasm_bindgen(js_name = "termToPsiSimple")]
 pub fn term_to_psi_simple_js(term: JsValue) -> String {
     term_to_psi_simple(&js_to_term(&term))
+}
+
+#[wasm_bindgen(js_name = "termToLmn")]
+pub fn term_to_lmn_js(term: JsValue) -> JsValue {
+    let forms = bms_core::lmn::term_to_lmn(&js_to_term(&term));
+    let obj = js_sys::Object::new();
+    js_sys::Reflect::set(&obj, &JsValue::from("p"), &JsValue::from(&forms.p)).ok();
+    js_sys::Reflect::set(&obj, &JsValue::from("pSimple"), &JsValue::from(&forms.p_simple)).ok();
+    js_sys::Reflect::set(&obj, &JsValue::from("bracket"), &JsValue::from(&forms.bracket)).ok();
+    js_sys::Reflect::set(&obj, &JsValue::from("full"), &JsValue::from(&forms.full)).ok();
+    obj.into()
 }
 
 #[wasm_bindgen(js_name = "bocfToBMS")]
@@ -447,7 +457,7 @@ pub fn sss_to_nocf_js(seq: JsValue) -> String {
         return "!first element must be 0".to_string();
     }
     match bms_core::sss::sss_to_nocf(&s) {
-        Ok(n) => n.to_string(),
+        Ok(n) => bms_core::ocf::nocf_to_sss_string(&n),
         Err(e) => format!("!{}", e),
     }
 }
@@ -462,6 +472,87 @@ pub fn sss_to_tprss_js(seq: JsValue) -> String {
     }
     match bms_core::sss::sss_to_tprss(&s) {
         Ok(t) => t,
+        Err(e) => format!("!{}", e),
+    }
+}
+
+/// Analyze a NOCF expression string and return its LaTeX display.
+/// Returns `!<error>` on failure.
+#[wasm_bindgen(js_name = "nocfAnalyze")]
+pub fn nocf_analyze_js(input: &str) -> String {
+    match bms_core::ocf::analyze_nocf(input) {
+        Ok(s) => s,
+        Err(e) => format!("!{}", e),
+    }
+}
+
+/// Analyze a NOCF expression with sugar (ψ_0^n(0) → n).
+#[wasm_bindgen(js_name = "nocfAnalyzeSugar")]
+pub fn nocf_analyze_sugar_js(input: &str) -> String {
+    match bms_core::ocf::analyze_nocf_sugar(input) {
+        Ok(s) => s,
+        Err(e) => format!("!{}", e),
+    }
+}
+
+/// Expand a NOCF expression by `fs` steps.
+#[wasm_bindgen(js_name = "nocfExpand")]
+pub fn nocf_expand_js(input: &str, fs: i32) -> String {
+    match bms_core::ocf::expand_nocf(input, fs) {
+        Ok(s) => s,
+        Err(e) => format!("!{}", e),
+    }
+}
+
+/// Analyze a MOCF expression string and return its LaTeX display.
+/// Returns `!<error>` on failure.
+#[wasm_bindgen(js_name = "mocfAnalyze")]
+pub fn mocf_analyze_js(input: &str) -> String {
+    match bms_core::ocf::analyze_mocf(input) {
+        Ok(s) => s,
+        Err(e) => format!("!{}", e),
+    }
+}
+
+/// Convert a BOCF expression into its MOCF (Madore) LaTeX display.
+/// Returns `!<error>` on failure.
+#[wasm_bindgen(js_name = "bocfToMocf")]
+pub fn bocf_to_mocf_js(input: &str) -> String {
+    match bms_core::bocf_mocf::bocf_to_mocf(input) {
+        Ok(s) => s,
+        Err(e) => format!("!{}", e),
+    }
+}
+
+/// Convert a MOCF expression into a real BOCF Term, rendered both in the
+/// ordinal notation and in the pure ψ term notation (ψ Raw).
+#[wasm_bindgen(js_name = "mocfToBocf")]
+pub fn mocf_to_bocf_js(input: &str) -> JsValue {
+    let obj = js_sys::Object::new();
+    let t = match bms_core::ocf::parse_mocf(input)
+        .and_then(|m| bms_core::mocf_bocf::mocf_to_term_top(&m))
+    {
+        Ok(t) => standard_form(&t),
+        Err(e) => {
+            js_sys::Reflect::set(&obj, &JsValue::from("ordinal"), &JsValue::from("")).ok();
+            js_sys::Reflect::set(&obj, &JsValue::from("ordinalJS"), &term_to_js(&zero())).ok();
+            js_sys::Reflect::set(&obj, &JsValue::from("psiSimple"), &JsValue::from("")).ok();
+            js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from(&e)).ok();
+            return obj.into();
+        }
+    };
+    js_sys::Reflect::set(&obj, &JsValue::from("ordinal"), &JsValue::from(term_to_string(false, &t))).ok();
+    js_sys::Reflect::set(&obj, &JsValue::from("ordinalJS"), &term_to_js(&t)).ok();
+    js_sys::Reflect::set(&obj, &JsValue::from("psiSimple"), &JsValue::from(term_to_psi_simple(&t))).ok();
+    js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from("")).ok();
+    obj.into()
+}
+
+/// Expand a MOCF expression by `fs` steps.
+#[wasm_bindgen(js_name = "mocfExpand")]
+pub fn mocf_expand_js(input: &str, fs: i32) -> String {
+    match bms_core::ocf::expand_mocf(input, fs) {
+        Ok(s) => s,
         Err(e) => format!("!{}", e),
     }
 }

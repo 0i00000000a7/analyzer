@@ -2,16 +2,20 @@
 //! Column-major matrix format: matrix[col][row].
 
 pub mod bms;
+pub mod bocf_mocf;
 pub mod expand;
 pub mod hydra;
 pub mod ihss;
+pub mod lmn;
 pub mod mbocf;
+pub mod mocf_bocf;
 pub mod one_y;
 pub mod parser;
 pub mod term;
 pub mod triangular;
 pub mod seq_std;
 pub mod sss;
+pub mod ocf;
 pub mod upms;
 pub mod wy;
 pub mod y_dbms;

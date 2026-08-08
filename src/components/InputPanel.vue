@@ -4,11 +4,10 @@ import { useI18n } from '../composables/useI18n';
 
 const { t } = useI18n();
 
-type InputMode = 'bms' | '0y' | '1y' | 'wy' | 'bocf' | 'upms' | 'hprss' | 'lprss' | 'hydra' | 'ihss' | 'mbo' | 'sss';
+type InputMode = 'bms' | '0y' | '1y' | 'wy' | 'bocf' | 'upms' | 'hprss' | 'lprss' | 'hydra' | 'ihss' | 'mbo' | 'sss' | 'nocf' | 'mocf';
 
 const mode = defineModel<InputMode>('mode', { required: true });
 const value = defineModel<string>('value', { required: true });
-defineProps<{ enableMBOcf: boolean }>();
 
 const placeholder = computed(() => {
   switch (mode.value) {
@@ -24,6 +23,8 @@ const placeholder = computed(() => {
     case 'ihss': return t('placeholder.ihss');
     case 'mbo': return t('placeholder.mbo');
     case 'sss': return t('placeholder.sss');
+    case 'nocf': return t('placeholder.nocf');
+    case 'mocf': return t('placeholder.mocf');
     default: return '';
   }
 });
@@ -45,11 +46,11 @@ function setMode(m: InputMode) {
       <button class="mode-btn" :class="{ active: mode === 'wy' }" @click="setMode('wy')">ω-Y</button>
       <button class="mode-btn" :class="{ active: mode === 'bocf' }" @click="setMode('bocf')">BOCF</button>
       <button class="mode-btn" :class="{ active: mode === 'hydra' }" @click="setMode('hydra')">PSS Hydra</button>
-      <template v-if="enableMBOcf">
-        <button class="mode-btn" :class="{ active: mode === 'ihss' }" @click="setMode('ihss')">IHSS Hydra</button>
-        <button class="mode-btn" :class="{ active: mode === 'mbo' }" @click="setMode('mbo')">Mahlo BOCF</button>
-      </template>
+      <button class="mode-btn" :class="{ active: mode === 'ihss' }" @click="setMode('ihss')">IHSS Hydra</button>
+      <button class="mode-btn" :class="{ active: mode === 'mbo' }" @click="setMode('mbo')">Mahlo BOCF</button>
       <button class="mode-btn" :class="{ active: mode === 'sss' }" @click="setMode('sss')">SSS</button>
+      <button class="mode-btn" :class="{ active: mode === 'nocf' }" @click="setMode('nocf')">NOCF</button>
+      <button class="mode-btn" :class="{ active: mode === 'mocf' }" @click="setMode('mocf')">MOCF</button>
     </div>
     <input style="width: 100%" :placeholder="placeholder" v-model="value" />
   </div>

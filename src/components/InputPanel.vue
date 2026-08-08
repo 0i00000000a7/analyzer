@@ -12,6 +12,7 @@ defineProps<{ enableMBOcf: boolean }>();
 
 const placeholder = computed(() => {
   switch (mode.value) {
+    case 'bms': return t('placeholder.bms');
     case '0y': return t('placeholder.0y');
     case '1y': return t('placeholder.1y');
     case 'wy': return t('placeholder.wy');

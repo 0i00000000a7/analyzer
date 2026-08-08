@@ -8,6 +8,8 @@ export const zh: Record<string, string> = {
   'warning.nonStandardMild': '输入不标准（将被标准化）',
   'warning.sssBocfUnstable': '目前SSS转BOCF的算法尚不稳定，对于部分表达式的转换存在错误（如 0,1,2,2,3,0,1,1,2,3,3,4,1）',
 
+  'placeholder.bms': '例如 (0,0,0)(1,1,1)(2,1,0)(1,1,1)',
+
   'placeholder.0y': '例如 1,4,8,11',
   'placeholder.1y': '例如 1,2,3,4',
   'placeholder.wy': '例如 1,2,3,4',

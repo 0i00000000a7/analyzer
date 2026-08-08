@@ -8,6 +8,8 @@ export const en: Record<string, string> = {
   'warning.nonStandardMild': 'Input is not standard (will be standardized)',
   'warning.sssBocfUnstable': 'The SSS→BOCF algorithm is currently unstable; conversions of some expressions may be incorrect (e.g. 0,1,2,2,3,0,1,1,2,3,3,4,1)',
 
+  'placeholder.bms': 'e.g. (0,0,0)(1,1,1)(2,1,0)(1,1,1)',
+
   'placeholder.0y': 'e.g. 1,4,8,11',
   'placeholder.1y': 'e.g. 1,2,3,4',
   'placeholder.wy': 'e.g. 1,2,3,4',

@@ -70,7 +70,7 @@ function loadSettings(): Settings {
 
 const saved = loadSettings();
 const inputMode = ref<InputMode>('bms');
-const inputValue = ref('(0,0,0)(1,1,1)(2,1,0)(1,1,1)');
+const inputValue = ref('');
 const veblenMode = ref<VeblenMode>(saved.veblenMode);
 const sugarEnabled = ref<boolean>(saved.sugarEnabled);
 const bocfDisplayMode = ref<BocfDisplayMode>(saved.bocfDisplayMode);

@@ -1613,6 +1613,39 @@ fn extract_psi_factor(lead: &C) -> Option<(C, C)> {
     }
 }
 
+/// Extract a cardinal factor Ω_s from lead, returning (Ω_s, cof) with
+/// lead = Ω_s·cof. Used for ω^{Ω_s·cof} = Ω_s^cof (a cardinal is a fixed
+/// point of ω^). Also handles a power of a cardinal Ω_s^a:
+/// ω^{Ω_s^a} = Ω_s^{Ω_s^{a-1}} (finite a ≥ 1), Ω_s^{Ω_s^a} (limit a).
+fn extract_cardinal_factor(lead: &C) -> Option<(C, C)> {
+    let mut factors: Vec<C> = Vec::new();
+    flatten_product(lead, &mut factors);
+    let idx = factors.iter().position(|f| {
+        matches!(f, C::Omega | C::OmegaSub(_))
+            || matches!(f, C::Pow(b, _) if matches!(b.as_ref(), C::Omega | C::OmegaSub(_)))
+    })?;
+    let f = factors.remove(idx);
+    let cof_rest = product_of(&factors);
+    match f {
+        C::Omega | C::OmegaSub(_) => Some((f, cof_rest)),
+        C::Pow(b, a) => {
+            let base = (*b).clone();
+            let exp = match a.as_ref() {
+                C::Nat(n) if *n >= 1 => {
+                    if *n == 1 {
+                        C::One
+                    } else {
+                        C::Pow(b.clone(), Box::new(c_nat(n - 1)))
+                    }
+                }
+                _ => C::Pow(b.clone(), a.clone()), // limit a: cof = Ω_s^a
+            };
+            Some((base, c_mul(exp, cof_rest)))
+        }
+        _ => unreachable!(),
+    }
+}
+
 fn normalize_omegapow(exp: C) -> C {
     let e = normalize(exp);
     let parts = flatten_c_sum(&e);
@@ -1634,6 +1667,19 @@ fn normalize_omegapow(exp: C) -> C {
             normalize(psi_pow)
         } else {
             normalize(c_mul(psi_pow, C::OmegaPow(Box::new(rest_sum))))
+        }
+    } else if let Some((card, cof)) = extract_cardinal_factor(lead) {
+        // Ω_s is a fixed point of ω^: ω^{Ω_s·cof + rest} = Ω_s^cof · ω^{rest}.
+        let card_pow = if matches!(&cof, C::One) || matches!(&cof, C::Nat(1)) {
+            card
+        } else {
+            C::Pow(Box::new(card), Box::new(cof))
+        };
+        let rest_sum = c_sum(rest);
+        if is_c_zero(&rest_sum) {
+            normalize(card_pow)
+        } else {
+            normalize(c_mul(card_pow, C::OmegaPow(Box::new(rest_sum))))
         }
     } else {
         C::OmegaPow(Box::new(e))
@@ -1741,13 +1787,34 @@ fn as_psi_fixed_block(b: &C) -> Option<(C, PsiCoef)> {
     }
 }
 
+/// A cardinal is a fixed point of ω^: ω^{Ω_s} = Ω_s and
+/// ω^{Ω_s^a} = Ω_s^{Ω_s^{a-1}} (finite a ≥ 1), Ω_s^{Ω_s^a} (limit a).
+fn as_cardinal_fixed_block(b: &C) -> Option<(C, PsiCoef)> {
+    match b {
+        C::Omega | C::OmegaSub(_) => Some((b.clone(), PsiCoef::One)),
+        C::Pow(p, j) if matches!(p.as_ref(), C::Omega | C::OmegaSub(_)) => match j.as_ref() {
+            C::Nat(n) if *n >= 2 => Some((
+                (**p).clone(),
+                PsiCoef::Exp(C::Pow(p.clone(), Box::new(c_nat(n - 1)))),
+            )),
+            C::Nat(_) => Some(((**p).clone(), PsiCoef::One)),
+            other => Some((
+                (**p).clone(),
+                PsiCoef::Exp(C::Pow(p.clone(), Box::new(other.clone()))),
+            )),
+        },
+        _ => None,
+    }
+}
+
 /// Factor ω^{Σ blocks} into a product, pulling every ψ-value block out of
 /// the exponent via ω^{ψ_a(b)·k} = ψ_a(b)^k.
 fn factor_omega_pow(e: &C) -> Vec<C> {
     let mut factors: Vec<C> = Vec::new();
     let mut plain: Vec<C> = Vec::new();
     for b in flatten_c_sum(e) {
-        if let Some((base, coef)) = as_psi_fixed_block(&b) {
+        let fixed = as_psi_fixed_block(&b).or_else(|| as_cardinal_fixed_block(&b));
+        if let Some((base, coef)) = fixed {
             if !plain.is_empty() {
                 factors.push(C::OmegaPow(Box::new(c_sum(std::mem::take(&mut plain)))));
             }
@@ -1987,6 +2054,42 @@ mod tests {
         assert_eq!(conv("ψ_1(Ω_(ω+1)^2)"), "\\psi_{1}(\\Omega_{\\omega + 1})");
         assert_eq!(conv("ψ_1(Ω_(ω+1)^3)"), "\\psi_{1}(\\Omega_{\\omega + 1}^{2})");
         assert_eq!(conv("ψ_1(Ω_(ω+1)^ω)"), "\\psi_{1}(\\Omega_{\\omega + 1}^{\\omega})");
+        // ω^Ω simplifies to Ω (a cardinal is a fixed point of ω^)
+        assert_eq!(conv("ψ_1(Ω_2+ψ_1(Ω_2+Ω))"), "\\psi_{1}(0)^{\\Omega}");
+        assert_eq!(conv("ψ_1(Ω_2+ψ_1(Ω_2+Ω)×2)"), "\\psi_{1}(0)^{\\Omega2}");
+    }
+
+    #[test]
+    fn cardinal_power_omega_exponent() {
+        use super::C;
+        let om2 = || C::OmegaSub(Box::new(C::Nat(2)));
+        // ω^{Ω_2^2} → Ω_2^{Ω_2}
+        let w = C::OmegaPow(Box::new(C::Pow(
+            Box::new(om2()),
+            Box::new(C::Nat(2)),
+        )));
+        assert_eq!(
+            super::render(&super::mocf_normalize(&w)),
+            "\\Omega_{2}^{\\Omega_{2}}"
+        );
+        // ω^{Ω_2^3} → Ω_2^{Ω_2^2}
+        let w3 = C::OmegaPow(Box::new(C::Pow(
+            Box::new(om2()),
+            Box::new(C::Nat(3)),
+        )));
+        assert_eq!(
+            super::render(&super::mocf_normalize(&w3)),
+            "\\Omega_{2}^{\\Omega_{2}^{2}}"
+        );
+        // ω^{Ω_2^ω} → Ω_2^{Ω_2^ω} (limit exponent stays)
+        let ww = C::OmegaPow(Box::new(C::Pow(
+            Box::new(om2()),
+            Box::new(C::OmegaPow(Box::new(C::One))),
+        )));
+        assert_eq!(
+            super::render(&super::mocf_normalize(&ww)),
+            "\\Omega_{2}^{\\Omega_{2}^{\\omega}}"
+        );
     }
 
     #[test]

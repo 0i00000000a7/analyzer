@@ -52,7 +52,8 @@ const veblenMHtml = katex.renderToString('\\begin{smallmatrix}\\alpha\\\\\\beta\
       <div class="settings-row">
         <span class="label">BOCF</span>
         <button class="mode-btn" :class="{ active: bocfDisplayMode === 'normal' }" @click="bocfDisplayMode = 'normal'">{{ t('settings.bocf.normal') }}</button>
-        <button class="mode-btn" :class="{ active: bocfDisplayMode === 'psi' }" @click="bocfDisplayMode = 'psi'">{{ t('settings.bocf.psiRaw') }}</button>
+        <button class="mode-btn" :class="{ active: bocfDisplayMode === 'psi' }" @click="bocfDisplayMode = 'psi'">{{ t('settings.bocf.simple') }}</button>
+        <button class="mode-btn" :class="{ active: bocfDisplayMode === 'pure' }" @click="bocfDisplayMode = 'pure'">{{ t('settings.bocf.pure') }}</button>
       </div>
       <div class="settings-row">
         <span class="label">LMN</span>

@@ -131,7 +131,7 @@ export async function bmsTo0YSequence(matrix: Matrix): Promise<string> {
 /** Parse and evaluate a BOCF expression via WASM, returning {ast, ordinal, ordinalJS, error} */
 export async function parseAndEvalBOCF(
   input: string,
-): Promise<{ ast: string; ordinal: string; ordinalJS: any[]; psiSimple: string; error: string; hydra?: string; hprss?: number[] }> {
+): Promise<{ ast: string; ordinal: string; ordinalJS: any[]; psiSimple: string; pure: string; error: string; hydra?: string; hprss?: number[] }> {
   await ensureLoaded();
   return wasmModule.parseAndEvalBOCF(input);
 }
@@ -250,6 +250,12 @@ export async function termToLmn(term: any[]): Promise<{
 }> {
   await ensureLoaded();
   return wasmModule.termToLmn(term);
+}
+
+/** Convert an ordinal term (JS array) directly to its MOCF string */
+export async function termToMocf(term: any[]): Promise<string> {
+  await ensureLoaded();
+  return wasmModule.termToMocf(term);
 }
 
 export async function fundamentalSequence(term: any[], n: number): Promise<{ term: string; termJS: any[] }> {

@@ -55,7 +55,7 @@ function loadSettings(): Settings {
     const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     const s = { ...defaults, ...raw };
     if (!['v', 'm'].includes(s.veblenMode)) s.veblenMode = defaults.veblenMode;
-    if (!['normal', 'psi'].includes(s.bocfDisplayMode)) s.bocfDisplayMode = defaults.bocfDisplayMode;
+    if (!['normal', 'psi', 'pure'].includes(s.bocfDisplayMode)) s.bocfDisplayMode = defaults.bocfDisplayMode;
     if (!['full', 'simple'].includes(s.lmnDisplayMode)) s.lmnDisplayMode = defaults.lmnDisplayMode;
     if (!['matrix', 'flat', 'compact'].includes(s.bmsDisplayMode)) s.bmsDisplayMode = defaults.bmsDisplayMode;
     if (!['matrix', 'flat', 'compact'].includes(s.upmsDisplayMode)) s.upmsDisplayMode = defaults.upmsDisplayMode;

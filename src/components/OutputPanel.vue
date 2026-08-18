@@ -104,8 +104,8 @@ function copyText(e: MouseEvent, label: string) {
       <span v-if="copiedRow === 'mocf'" class="muted" style="font-size: 9pt">{{ t('output.copied') }}</span>
     </div>
 
-    <!-- BOCF → MOCF conversion output -->
-    <div v-if="props.inputMode === 'bocf' && props.bocfMocfHtml" data-row="bocfMocf" style="display: flex; align-items: baseline; gap: 8px; margin-top: 8px">
+    <!-- BOCF → MOCF conversion output (also BMS → BOCF → MOCF) -->
+    <div v-if="(props.inputMode === 'bocf' || props.inputMode === 'bms') && props.bocfMocfHtml" data-row="bocfMocf" style="display: flex; align-items: baseline; gap: 8px; margin-top: 8px">
       <span class="label" style="font-size: 12pt; width: 70px; text-align: right; cursor: pointer" @click="copyText($event, 'bocfMocf')" :title="t('output.copy')">MOCF</span>
       <span data-content style="font-size: 16pt" v-html="props.bocfMocfHtml"></span>
       <span v-if="copiedRow === 'bocfMocf'" class="muted" style="font-size: 9pt">{{ t('output.copied') }}</span>

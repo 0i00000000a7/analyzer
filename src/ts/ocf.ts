@@ -14,8 +14,6 @@ async function ensureLoaded(): Promise<void> {
 export interface OcfAnalysis {
   error?: string;
   latex?: string;
-  psiSimple?: string;
-  ordinalJS?: any[];
 }
 
 export async function nocfAnalyze(input: string, sugar?: boolean): Promise<OcfAnalysis> {
@@ -47,11 +45,4 @@ export async function bocfToMocf(input: string): Promise<OcfAnalysis> {
   const r = wasmModule.bocfToMocf(input);
   if (r.startsWith('!')) return { error: r.slice(1) };
   return { latex: r };
-}
-
-export async function mocfToBocf(input: string): Promise<OcfAnalysis> {
-  await ensureLoaded();
-  const r = wasmModule.mocfToBocf(input);
-  if (r.error) return { error: r.error };
-  return { latex: r.ordinal, psiSimple: r.psiSimple, ordinalJS: r.ordinalJS };
 }

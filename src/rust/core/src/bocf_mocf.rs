@@ -362,11 +362,208 @@ fn conv_psi(sub: Option<&Ast>, arg: &Ast) -> C {
     match sub {
         None => conv_psi0(arg),
         Some(v) => {
+            if let Some(c) = collapse_psi_next_cardinal(v, arg) {
+                return c;
+            }
             // Level-shift: the subscript collapses the next cardinal.
             let vc = conv_ord(v);
             let argc = conv_at_level(v, arg);
             C::Psi(Some(Box::new(vc)), Box::new(argc))
         }
+    }
+}
+
+/// ψ_v(Ω_{v+1}·k + r) at any level v: the Ω_{v+1}·k lead collapses to
+/// ψ_v(σ(k)); ψ_v(Ω_{v+1}·j + y)·m blocks of the tail become multiplicative
+/// factors (recursively collapsed), parts below Ω become an ω^ factor
+/// (conv_sym keeps ψ(0) symbolic so ω^{ψ(0)} absorbs to ψ(0)), and Ω-power
+/// parts stay as factors.  A bare Ω_{v+1}^e lead collapses by lowering a
+/// finite exponent (e ≥ 2) and keeps limit exponents.
+fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
+    let mut blocks = Vec::new();
+    flatten_add(arg, &mut blocks);
+    if blocks.is_empty() {
+        return None;
+    }
+    let (head_opt, mult) = split_head_mult(&blocks[0]);
+    let vc = conv_ord(v);
+    match head_opt {
+        Some(Head::CardinalPow(s, _e)) => {
+            // Successor-cardinal powers lower their exponent by one
+            // (translate_down); limit exponents stay. Applies both to the
+            // collapse cardinal Ω_{v+1} and to successor leads above it.
+            let is_next = ast_eq(&pred_ord(&s), v);
+            let v_nat = as_nat(v);
+            let s_nat = as_nat(&s);
+            let collapse_sub = v_nat.map(|vn| vn + 1);
+            let is_above = is_successor_ord(&s)
+                && !is_next
+                && match (s_nat, collapse_sub) {
+                    (Some(sn), Some(csn)) => sn > csn,
+                    (None, Some(_)) => true,
+                    _ => false,
+                };
+            if !is_next && !is_above {
+                return None;
+            }
+            if !matches!(mult, Ast::Num(1)) || blocks.len() > 1 {
+                return None;
+            }
+            let translated = translate_down(&blocks[0]);
+            Some(C::Psi(
+                Some(Box::new(vc)),
+                Box::new(conv_ord(&translated)),
+            ))
+        }
+        Some(Head::Cardinal(s)) => {
+            // s = v+1 → the lead collapses to ψ_v(σ(k)); a limit subscript
+            // (e.g. Ω_ω) keeps the base ψ_v(Ω_s·k) unchanged; a successor
+            // lead above Ω_{v+1} collapses to ψ_{s-1}(σ(k)) as ψ_v's argument.
+            let is_next = ast_eq(&pred_ord(&s), v);
+            let is_limit_lead = !is_successor_ord(&s) && !matches!(&s, Ast::Num(_));
+            let v_nat = as_nat(v);
+            let s_nat = as_nat(&s);
+            let collapse_sub = v_nat.map(|vn| vn + 1);
+            let is_above = is_successor_ord(&s)
+                && !is_next
+                && match (s_nat, collapse_sub) {
+                    (Some(sn), Some(csn)) => sn > csn,
+                    (None, Some(_)) => true,
+                    _ => false,
+                };
+            if !is_next && !is_limit_lead && !is_above {
+                return None;
+            }
+            let base_arg = if is_next {
+                sigma(&mult)
+            } else if is_above {
+                C::Psi(
+                    Some(Box::new(conv_ord(&pred_ord(&s)))),
+                    Box::new(sigma(&mult)),
+                )
+            } else {
+                conv_ord(&blocks[0])
+            };
+            let base = C::Psi(Some(Box::new(vc.clone())), Box::new(base_arg.clone()));
+            let tail = sum_of(&blocks[1..]);
+            if is_zero_ast(&tail) {
+                return Some(base);
+            }
+            let mut tblocks = Vec::new();
+            flatten_add(&tail, &mut tblocks);
+            let mut small: Vec<Ast> = Vec::new();
+            let mut psi_blocks: Vec<Ast> = Vec::new();
+            let mut factors: Vec<C> = Vec::new();
+            let mut limit_arg_parts: Vec<C> = Vec::new();
+            for b in &tblocks {
+                if is_next && as_psi_card_block(b, v, &s).is_some() {
+                    psi_blocks.push(b.clone());
+                } else if is_below_omega1(b) {
+                    small.push(b.clone());
+                } else if let Some((j, y, m)) = as_psi_card_block(b, v, &s) {
+                    // limit-lead: ψ_v-block recurses as a plain factor
+                    let om_j = Ast::Mul(
+                        Box::new(Ast::Omega(Some(Box::new(s.clone())))),
+                        Box::new(j),
+                    );
+                    let farg = if is_zero_ast(&y) {
+                        om_j
+                    } else {
+                        Ast::Add(Box::new(om_j), Box::new(y))
+                    };
+                    let f = collapse_psi_next_cardinal(v, &farg).unwrap_or_else(|| {
+                        C::Psi(Some(Box::new(vc.clone())), Box::new(conv_at_level(v, &farg)))
+                    });
+                    factors.push(c_mul(f, conv_ord(&m)));
+                } else if is_limit_lead {
+                    // Limit-lead tail cardinals fold into the argument
+                    // (collapse_fixed_cardinal's pattern): the collapse
+                    // cardinal Ω_{v+1}·m → m; a higher cardinal Ω_s2 (s2>v+1)
+                    // → ψ_{s2-1}(Ω_s·k + m); anything else translates down.
+                    let (h2, m2) = split_head_mult(b);
+                    match &h2 {
+                        Some(Head::Cardinal(s2)) => {
+                            let s2_nat = as_nat(s2);
+                            match (s2_nat, collapse_sub) {
+                                (Some(s2n), Some(csn)) if s2n == csn => {
+                                    limit_arg_parts.push(conv_ord(&m2));
+                                }
+                                (Some(s2n), Some(csn)) if s2n > csn => {
+                                    limit_arg_parts.push(C::Psi(
+                                        Some(Box::new(conv_ord(&pred_ord(s2)))),
+                                        Box::new(c_sum(vec![
+                                            conv_ord(&blocks[0]),
+                                            conv_ord(&m2),
+                                        ])),
+                                    ));
+                                }
+                                _ => {
+                                    factors.push(conv_ord(b));
+                                }
+                            }
+                        }
+                        _ => {
+                            limit_arg_parts.push(conv_ord(&translate_down(b)));
+                        }
+                    }
+                } else {
+                    factors.push(conv_ord(b));
+                }
+            }
+            // Ω_{v+1} lead (mult 1) with ψ_v-block tails: exponent machinery,
+            // the level-v analogue of collapse_omega1's k==1 branch.
+            if is_next && matches!(&mult, Ast::Num(1)) && !psi_blocks.is_empty() {
+                let pv0 = C::Psi(Some(Box::new(vc.clone())), Box::new(C::Zero));
+                let mut e: Option<C> = None;
+                let mut has_deep = false;
+                for b in &psi_blocks {
+                    let (_j, y, m) = as_psi_card_block(b, v, &s).unwrap();
+                    let contrib = g_contrib_level(v, &pv0, &y, &m);
+                    e = Some(match e {
+                        None => contrib,
+                        Some(prev) => combine_e_level(&pv0, prev, &contrib),
+                    });
+                    if !is_zero_ast(&y) {
+                        has_deep = true;
+                    }
+                }
+                let e = e.unwrap();
+                let t = if has_deep { c_mul(pv0.clone(), e) } else { e };
+                let small_c = if small.is_empty() {
+                    C::Zero
+                } else {
+                    conv_ord(&sum_of(&small))
+                };
+                let exp = if is_c_zero(&small_c) {
+                    t
+                } else {
+                    c_sum(vec![t, small_c])
+                };
+                let mut result = c_mul(pv0, C::OmegaPow(Box::new(exp)));
+                for f in factors {
+                    result = c_mul(result, f);
+                }
+                return Some(result);
+            }
+            let mut result = if is_limit_lead && !limit_arg_parts.is_empty() {
+                let mut arg_parts = vec![base_arg];
+                arg_parts.extend(limit_arg_parts);
+                C::Psi(Some(Box::new(vc.clone())), Box::new(c_sum(arg_parts)))
+            } else {
+                base
+            };
+            for f in factors {
+                result = c_mul(result, f);
+            }
+            let w = sum_of(&small);
+            if !is_zero_ast(&w) {
+                // conv_ord collapses ψ₀-values (ψ(Ω)=ε₀ → ψ(0)); ω^{ψ(0)}
+                // then absorbs to ψ(0).
+                result = c_mul(result, C::OmegaPow(Box::new(conv_ord(&w))));
+            }
+            Some(result)
+        }
+        _ => None,
     }
 }
 
@@ -615,6 +812,40 @@ fn combine_e(prev: C, contrib: &C) -> C {
     };
     if prev_small {
         // E < ψ(0): add j
+        c_sum(vec![prev, j])
+    } else if matches!(&j, C::One) {
+        c_sum(vec![prev, C::One])
+    } else {
+        c_mul(prev, j)
+    }
+}
+
+/// Level-v exponent contribution of a ψ_v(Ω_{v+1}·j + y)·m block: y = 0 gives
+/// ψ_v(0)·m, otherwise ω^{conv(y)}·m (the level-v analogue of g_contrib).
+fn g_contrib_level(v: &Ast, pv0: &C, y: &Ast, m: &Ast) -> C {
+    let _ = v;
+    let mv = conv_ord(m);
+    if is_zero_ast(y) {
+        return c_mul(pv0.clone(), mv);
+    }
+    c_mul(C::OmegaPow(Box::new(conv_ord(y))), mv)
+}
+
+/// Combine a trailing ψ_v(Ω_{v+1})·j contribution (as ψ_v(0)·j) into the
+/// exponent E (the level-v analogue of combine_e).
+fn combine_e_level(pv0: &C, prev: C, contrib: &C) -> C {
+    let pv0_s = render(pv0);
+    let j = match contrib {
+        C::Mul(a, b) if render(a) == pv0_s => (**b).clone(),
+        _ if render(contrib) == pv0_s => C::One,
+        _ => return c_sum(vec![prev, contrib.clone()]),
+    };
+    let prev_small = match &prev {
+        C::OmegaPow(_) => true,
+        C::Mul(a, _) => matches!(a.as_ref(), C::OmegaPow(_)),
+        _ => false,
+    };
+    if prev_small {
         c_sum(vec![prev, j])
     } else if matches!(&j, C::One) {
         c_sum(vec![prev, C::One])
@@ -1150,6 +1381,15 @@ fn pred_ord(n: &Ast) -> Ast {
                 Ast::Add(l.clone(), Box::new(rp))
             }
         }
+        // l·k ↦ l·(k−1); in particular l·2 ↦ l and the degenerate l·1 ↦ l.
+        Ast::Mul(l, r) => {
+            let rp = pred_ord(r);
+            if matches!(&rp, Ast::Num(0)) || matches!(&rp, Ast::Num(1)) {
+                (**l).clone()
+            } else {
+                Ast::Mul(l.clone(), Box::new(rp))
+            }
+        }
         _ => n.clone(),
     }
 }
@@ -1680,6 +1920,74 @@ mod tests {
     use super::*;
 
     fn conv(s: &str) -> String { bocf_to_mocf(s).unwrap() }
+
+    #[test]
+    fn zz_probe_sub() {
+        let ast = crate::parser::parse_bocf("ψ_(ω+1)(Ω_(ω+2)+1)").unwrap();
+        let t = crate::parser::eval_ast(&ast).unwrap();
+        let s = crate::term::standard_form(&t);
+        let rt = term_to_ast(&s);
+        println!("PROBE parsed = {:?}", ast);
+        println!("PROBE roundtrip = {:?}", rt);
+        if let Ast::Psi(Some(v), arg) = &rt {
+            println!("PROBE v = {:?}", v);
+            let mut blocks = Vec::new();
+            flatten_add(arg, &mut blocks);
+            let (h, _m) = split_head_mult(&blocks[0]);
+            if let Some(Head::Cardinal(sa)) = h {
+                println!("PROBE s_ast = {:?}, pred = {:?}", sa, pred_ord(&sa));
+                println!("PROBE ast_eq = {}", ast_eq(&pred_ord(&sa), v));
+            } else {
+                println!("PROBE head = {:?}", h);
+            }
+        }
+    }
+
+    #[test]
+    fn top_level_psi_next_cardinal_tails() {
+        // ψ_v(Ω_{v+1} + small) → ψ_v(0)·ω^{small}
+        assert_eq!(conv("ψ_1(Ω_2+1)"), "\\psi_{1}(0)\\omega");
+        assert_eq!(conv("ψ_1(Ω_2+2)"), "\\psi_{1}(0)\\omega^{2}");
+        assert_eq!(conv("ψ_1(Ω_2+ω)"), "\\psi_{1}(0)\\omega^{\\omega}");
+        // ε₀ tail ψ(Ω) collapses to ψ(0): ω^{ψ(0)} absorbs to ψ(0)
+        assert_eq!(conv("ψ_1(Ω_2+ψ(Ω))"), "\\psi_{1}(0)\\psi(0)");
+        // Ω-power tails stay as factors
+        assert_eq!(conv("ψ_1(Ω_2+Ω)"), "\\psi_{1}(0)\\Omega");
+        assert_eq!(conv("ψ_1(Ω_2+Ω^2)"), "\\psi_{1}(0)\\Omega^{2}");
+        assert_eq!(conv("ψ_1(Ω_2+Ω^ω)"), "\\psi_{1}(0)\\Omega^{\\omega}");
+        // ψ_v(Ω_{v+1}) tail collapses recursively
+        assert_eq!(conv("ψ_1(Ω_2+ψ_1(Ω_2))"), "\\psi_{1}(0)^{2}");
+        // ψ_v-block tails: exponent machinery → powers of ψ_v(0)
+        assert_eq!(conv("ψ_1(Ω_2+ψ_1(Ω_2)×2)"), "\\psi_{1}(0)^{3}");
+        assert_eq!(conv("ψ_1(Ω_2+ψ_1(Ω_2+1))"), "\\psi_{1}(0)^{\\omega}");
+        // Ω_{v+1}·k with no tail → ψ_v(σ(k))
+        assert_eq!(conv("ψ_1(Ω_2×2)"), "\\psi_{1}(1)");
+        assert_eq!(conv("ψ_1(Ω_2×3)"), "\\psi_{1}(2)");
+        assert_eq!(conv("ψ_1(Ω_2×ω)"), "\\psi_{1}(\\omega)");
+        // Ω_{v+1}^e leads: finite exponent lowers, limit stays
+        assert_eq!(conv("ψ_1(Ω_2^2)"), "\\psi_{1}(\\Omega_{2})");
+        assert_eq!(conv("ψ_1(Ω_2^ω)"), "\\psi_{1}(\\Omega_{2}^{\\omega})");
+        // higher levels
+        assert_eq!(conv("ψ_2(Ω_3+1)"), "\\psi_{2}(0)\\omega");
+        assert_eq!(conv("ψ_3(Ω_4+ω)"), "\\psi_{3}(0)\\omega^{\\omega}");
+        assert_eq!(conv("ψ_(ω+1)(Ω_(ω+2)+1)"), "\\psi_{\\omega + 1}(0)\\omega");
+        // limit-cardinal lead: base ψ_v(Ω_ω) stays; tail cardinals fold into
+        // the argument (collapse_fixed_cardinal pattern): Ω_{v+1} → 1,
+        // Ω_s2 (s2>v+1) → ψ_{s2-1}(Ω_ω+…).
+        assert_eq!(conv("ψ_1(Ω_ω)"), "\\psi_{1}(\\Omega_{\\omega})");
+        assert_eq!(conv("ψ_1(Ω_ω+1)"), "\\psi_{1}(\\Omega_{\\omega})\\omega");
+        assert_eq!(conv("ψ_1(Ω_ω+ω)"), "\\psi_{1}(\\Omega_{\\omega})\\omega^{\\omega}");
+        assert_eq!(conv("ψ_1(Ω_ω+Ω)"), "\\psi_{1}(\\Omega_{\\omega} + 1)");
+        assert_eq!(conv("ψ_1(Ω_ω+Ω_2)"), "\\psi_{1}(\\Omega_{\\omega} + 1)");
+        // successor lead above the collapse cardinal → ψ_{s-1}(0) as argument
+        assert_eq!(conv("ψ_1(Ω_3+Ω)"), "\\psi_{1}(\\psi_{2}(0))\\Omega");
+        assert_eq!(conv("ψ_1(Ω_(ω+1))"), "\\psi_{1}(\\psi_{\\omega}(0))");
+        assert_eq!(conv("ψ_1(Ω_(ω+1)+Ω)"), "\\psi_{1}(\\psi_{\\omega}(0))\\Omega");
+        // successor-cardinal powers above the collapse cardinal: exponent lowers
+        assert_eq!(conv("ψ_1(Ω_(ω+1)^2)"), "\\psi_{1}(\\Omega_{\\omega + 1})");
+        assert_eq!(conv("ψ_1(Ω_(ω+1)^3)"), "\\psi_{1}(\\Omega_{\\omega + 1}^{2})");
+        assert_eq!(conv("ψ_1(Ω_(ω+1)^ω)"), "\\psi_{1}(\\Omega_{\\omega + 1}^{\\omega})");
+    }
 
     #[test]
     fn standardness_of_nested_omega_tower() {

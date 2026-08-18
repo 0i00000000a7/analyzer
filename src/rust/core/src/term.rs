@@ -1620,6 +1620,33 @@ fn psi_simple_head(p: &Term) -> String {
     )
 }
 
+/// Pure ψ form: only `ψ`, `(`, `)`, `_`, `+`, `0` appear. Naturals are sums
+/// of ψ(0), Ω_α is ψ_α(0), and runs of identical heads are fully expanded
+/// (no digit multipliers, no \\Omega, no ordinal products).
+pub fn term_to_pure(q: &Term) -> String {
+    if is_zero(q) {
+        return "0".to_string();
+    }
+    let mut parts = Vec::new();
+    let mut cur = q.clone();
+    while !is_zero(&cur) {
+        let node = cur.as_ref().unwrap();
+        let a = &node.a;
+        let b = &node.b;
+        if is_zero(a) {
+            parts.push(format!("\\psi\\left({}\\right)", term_to_pure(b)));
+        } else {
+            parts.push(format!(
+                "\\psi_{{{}}}\\left({}\\right)",
+                term_to_pure(a),
+                term_to_pure(b)
+            ));
+        }
+        cur = node.c.clone();
+    }
+    parts.join("+")
+}
+
 // Debug wrappers
 pub fn debug_decompose_power(a: &Term) -> (Term, Term) {
     decompose_power(a)
@@ -1689,5 +1716,34 @@ mod tests {
             term_to_psi_simple(&r),
             "\\psi\\left(\\psi_{1}\\left(\\Omega+\\psi\\left(\\psi_{1}\\left(\\Omega+\\psi\\left(\\psi_{1}\\left(\\Omega+1\\right)\\right)\\right)\\right)\\right)\\right)"
         );
+    }
+
+    #[test]
+    fn pure_display() {
+        assert_eq!(term_to_pure(&zero()), "0");
+        // 1 = ψ₀(0)
+        assert_eq!(
+            term_to_pure(&one()),
+            "\\psi\\left(0\\right)"
+        );
+        // naturals expand to sums of ψ(0), never digits
+        assert_eq!(
+            term_to_pure(&from_int(3)),
+            "\\psi\\left(0\\right)+\\psi\\left(0\\right)+\\psi\\left(0\\right)"
+        );
+        // ω = ψ₀(1)
+        assert_eq!(
+            term_to_pure(&omega()),
+            "\\psi\\left(\\psi\\left(0\\right)\\right)"
+        );
+        // Ω = ψ₁(0): subscript 1 = ψ₀(0)
+        assert_eq!(
+            term_to_pure(&omega1()),
+            "\\psi_{\\psi\\left(0\\right)}\\left(0\\right)"
+        );
+        // only ψ, (, ), _, +, 0 may appear: no digits besides 0, no \Omega
+        let s = term_to_pure(&eval("ψ(Ω^3)"));
+        assert!(!s.contains("\\Omega"));
+        assert!(!s.chars().any(|c| c.is_ascii_digit() && c != '0'));
     }
 }

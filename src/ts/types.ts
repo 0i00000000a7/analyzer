@@ -12,6 +12,7 @@ export interface AnalysisResult {
   ordinal: string;
   ordinalJS: any[][];
   psiSimple: string;
+  pure: string;
   veblen: string;
   veblenPlain: string;
   veblenMatrix: string;

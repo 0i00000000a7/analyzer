@@ -32,14 +32,14 @@ import { hydraAnalyze, hprssAnalyze, lprssAnalyze, expandHPRSS, expandHydra, bui
 import { ihssAnalyze, ihssExpand, ihssIsStandard } from '../ts/ihss.js';
 import { mboAst, mbocfToIHSS } from '../ts/mbocf.js';
 import { sssExpand, sssToBocf, sssToNocf, sssToTprss, sssIsStandard, parseSSS } from '../ts/sss.js';
-import { nocfAnalyze, nocfExpand, mocfAnalyze, mocfExpand, bocfToMocf, mocfToBocf } from '../ts/ocf.js';
-import { hydraIsStandard, termToLmn } from '../ts/bms.js';
+import { nocfAnalyze, nocfExpand, mocfAnalyze, mocfExpand, bocfToMocf } from '../ts/ocf.js';
+import { hydraIsStandard, termToLmn, termToMocf } from '../ts/bms.js';
 import { useI18n } from './useI18n';
 import type { AnalysisResult, Matrix, Mountain } from '../ts/types.js';
 
 export type InputMode = 'bms' | '0y' | '1y' | 'wy' | 'bocf' | 'upms' | 'hprss' | 'lprss' | 'hydra' | 'ihss' | 'mbo' | 'sss' | 'nocf' | 'mocf';
 export type VeblenMode = 'v' | 'm';
-export type BocfDisplayMode = 'normal' | 'psi';
+export type BocfDisplayMode = 'normal' | 'psi' | 'pure';
 export type LmnDisplayMode = 'full' | 'simple';
 export type BmsDisplayMode = 'matrix' | 'flat' | 'compact';
 export type UpmsDisplayMode = 'matrix' | 'flat' | 'compact';
@@ -205,7 +205,9 @@ export function useAnalysis(
   }
 
   function getBocfOutput(r: AnalysisResult, mode: BocfDisplayMode): string | null {
-    return mode === 'psi' ? (r.psiSimple || null) : (r.ordinal || null);
+    if (mode === 'psi') return r.psiSimple || null;
+    if (mode === 'pure') return r.pure || null;
+    return r.ordinal || null;
   }
 
   async function refreshLmnRow(): Promise<void> {
@@ -488,6 +490,17 @@ function renderUpms(raw: string): string {
       const bocfOut = getBocfOutput(r, bocfDisplayMode.value);
       ordinalHtml.value = bocfOut ? katex.renderToString(bocfOut, { throwOnError: false }) : '';
       refreshLmnRow();
+      // BMS → BOCF → MOCF
+      if (!r.gteEBO && r.ordinalJS && r.ordinalJS.length) {
+        try {
+          const mocf = await termToMocf(r.ordinalJS);
+          bocfMocfHtml.value = mocf ? katex.renderToString(mocf, { throwOnError: false }) : '';
+        } catch {
+          bocfMocfHtml.value = '';
+        }
+      } else {
+        bocfMocfHtml.value = '';
+      }
       const seq = await bmsTo0YSequence(matrix);
       zeroYHtml.value = seq ? katex.renderToString(seq, { throwOnError: false }) : '';
 
@@ -536,7 +549,7 @@ function renderUpms(raw: string): string {
       }
 
       const v = await termToVeblen(r.ordinalJS);
-      lastResult = { gteEBO: false, ordinal: r.ordinal, ordinalJS: r.ordinalJS, psiSimple: r.psiSimple, ...v, nsForm: '', isStandard: true } as AnalysisResult;
+      lastResult = { gteEBO: false, ordinal: r.ordinal, ordinalJS: r.ordinalJS, psiSimple: r.psiSimple, pure: r.pure, ...v, nsForm: '', isStandard: true } as AnalysisResult;
       const bocfOut = getBocfOutput(lastResult, bocfDisplayMode.value);
       ordinalHtml.value = bocfOut ? katex.renderToString(bocfOut, { throwOnError: false }) : '';
       if (lastResult.veblen) {
@@ -1043,34 +1056,10 @@ function renderUpms(raw: string): string {
     const r = await mocfAnalyze(rawInput);
     if (r.error) {
       mocfHtml.value = '(error)';
-      ordinalHtml.value = '';
       return;
     }
+    // MOCF→BOCF conversion was removed; render only the MOCF expression.
     mocfHtml.value = katex.renderToString(r.latex ?? '', { throwOnError: false });
-    const b = await mocfToBocf(rawInput);
-    if (b.error) {
-      ordinalHtml.value = '';
-      veblenHtml.value = '';
-      lmnHtml.value = '';
-      return;
-    }
-    const v = await termToVeblen(b.ordinalJS ?? []);
-    lastResult = {
-      gteEBO: false,
-      ordinal: b.latex ?? '',
-      ordinalJS: b.ordinalJS ?? [],
-      psiSimple: b.psiSimple ?? '',
-      ...v,
-      nsForm: '',
-      isStandard: true,
-    } as AnalysisResult;
-    const bocfOut = getBocfOutput(lastResult, bocfDisplayMode.value);
-    ordinalHtml.value = bocfOut ? katex.renderToString(bocfOut, { throwOnError: false }) : '';
-    if (lastResult.veblen) {
-      const veblenOut = getVeblenOutput(lastResult, veblenMode.value, sugarEnabled.value);
-      veblenHtml.value = veblenOut ? katex.renderToString(veblenOut, { throwOnError: false }) : '';
-    }
-    refreshLmnRow();
   }
 
   // BOCF conversion

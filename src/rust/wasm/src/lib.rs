@@ -172,10 +172,12 @@ pub fn bms_analyze(matrix: JsValue) -> JsValue {
         let lb = if is_eq_ebo(&m) { "\\psi(I)" } else { ">\\psi(I)" };
         js_sys::Reflect::set(&obj, &JsValue::from("ordinal"), &JsValue::from(lb)).ok();
         js_sys::Reflect::set(&obj, &JsValue::from("psiSimple"), &JsValue::from(lb)).ok();
+        js_sys::Reflect::set(&obj, &JsValue::from("pure"), &JsValue::from(lb)).ok();
     } else {
         let ordinal = bms_to_bocf(&m);
         let s = term_to_string(false, &ordinal);
         let psi_simple = term_to_psi_simple(&ordinal);
+        let pure = term_to_pure(&ordinal);
         let veblen = term_to_veblen(&ordinal);
         let veblen_plain = term_to_veblen_plain(&ordinal);
         let veblen_matrix = term_to_veblen_matrix(&ordinal);
@@ -184,6 +186,7 @@ pub fn bms_analyze(matrix: JsValue) -> JsValue {
         js_sys::Reflect::set(&obj, &JsValue::from("ordinal"), &JsValue::from(&s)).ok();
         js_sys::Reflect::set(&obj, &JsValue::from("ordinalJS"), &term_to_js(&ordinal)).ok();
         js_sys::Reflect::set(&obj, &JsValue::from("psiSimple"), &JsValue::from(&psi_simple)).ok();
+        js_sys::Reflect::set(&obj, &JsValue::from("pure"), &JsValue::from(&pure)).ok();
         js_sys::Reflect::set(&obj, &JsValue::from("veblen"), &JsValue::from(&veblen)).ok();
         js_sys::Reflect::set(&obj, &JsValue::from("veblenPlain"), &JsValue::from(&veblen_plain)).ok();
         js_sys::Reflect::set(&obj, &JsValue::from("veblenMatrix"), &JsValue::from(&veblen_matrix)).ok();
@@ -254,6 +257,7 @@ pub fn parse_and_eval_bocf_js(input: &str) -> JsValue {
                 js_sys::Reflect::set(&obj, &JsValue::from("ordinal"), &JsValue::from(term_to_string(false, &val))).ok();
                 js_sys::Reflect::set(&obj, &JsValue::from("ordinalJS"), &term_to_js(&val)).ok();
                 js_sys::Reflect::set(&obj, &JsValue::from("psiSimple"), &JsValue::from(term_to_psi_simple(&val))).ok();
+                js_sys::Reflect::set(&obj, &JsValue::from("pure"), &JsValue::from(term_to_pure(&val))).ok();
                 js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from("")).ok();
                 // BOCF → standard form → PSS Hydra (补层'd) and HPrSS (LP of unfilled)
                 if let Ok(unfilled) = bms_core::hydra::term_to_hydra(&standard_form(&val)) {
@@ -333,6 +337,12 @@ pub fn term_to_lmn_js(term: JsValue) -> JsValue {
     js_sys::Reflect::set(&obj, &JsValue::from("bracket"), &JsValue::from(&forms.bracket)).ok();
     js_sys::Reflect::set(&obj, &JsValue::from("full"), &JsValue::from(&forms.full)).ok();
     obj.into()
+}
+
+/// Convert a BOCF Term (JS array) directly to its MOCF string.
+#[wasm_bindgen(js_name = "termToMocf")]
+pub fn term_to_mocf_js(term: JsValue) -> String {
+    bms_core::bocf_mocf::term_to_mocf(&js_to_term(&term))
 }
 
 #[wasm_bindgen(js_name = "bocfToBMS")]
@@ -522,30 +532,6 @@ pub fn bocf_to_mocf_js(input: &str) -> String {
         Ok(s) => s,
         Err(e) => format!("!{}", e),
     }
-}
-
-/// Convert a MOCF expression into a real BOCF Term, rendered both in the
-/// ordinal notation and in the pure ψ term notation (ψ Raw).
-#[wasm_bindgen(js_name = "mocfToBocf")]
-pub fn mocf_to_bocf_js(input: &str) -> JsValue {
-    let obj = js_sys::Object::new();
-    let t = match bms_core::ocf::parse_mocf(input)
-        .and_then(|m| bms_core::mocf_bocf::mocf_to_term_top(&m))
-    {
-        Ok(t) => standard_form(&t),
-        Err(e) => {
-            js_sys::Reflect::set(&obj, &JsValue::from("ordinal"), &JsValue::from("")).ok();
-            js_sys::Reflect::set(&obj, &JsValue::from("ordinalJS"), &term_to_js(&zero())).ok();
-            js_sys::Reflect::set(&obj, &JsValue::from("psiSimple"), &JsValue::from("")).ok();
-            js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from(&e)).ok();
-            return obj.into();
-        }
-    };
-    js_sys::Reflect::set(&obj, &JsValue::from("ordinal"), &JsValue::from(term_to_string(false, &t))).ok();
-    js_sys::Reflect::set(&obj, &JsValue::from("ordinalJS"), &term_to_js(&t)).ok();
-    js_sys::Reflect::set(&obj, &JsValue::from("psiSimple"), &JsValue::from(term_to_psi_simple(&t))).ok();
-    js_sys::Reflect::set(&obj, &JsValue::from("error"), &JsValue::from("")).ok();
-    obj.into()
 }
 
 /// Expand a MOCF expression by `fs` steps.

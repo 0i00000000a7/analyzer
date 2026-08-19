@@ -362,11 +362,13 @@ fn conv_psi(sub: Option<&Ast>, arg: &Ast) -> C {
     match sub {
         None => conv_psi0(arg),
         Some(v) => {
-            // General rule: ψ_v(X + n) = ψ_v(X)·ω^n (finite n ≥ 1)
+            // General rule: ψ_v(X + β) = ψ_v(X)·ω^β for any trailing
+            // β < Ω_1 (finite n, ω, ω^ω, …); finite n peels unconditionally.
             let mut blocks = Vec::new();
             flatten_add(arg, &mut blocks);
             if !blocks.is_empty() {
-                let last_n = match &blocks[blocks.len() - 1] {
+                let last = blocks[blocks.len() - 1].clone();
+                let last_n = match &last {
                     Ast::Num(n) => Some(*n),
                     Ast::Mul(l, r) => match (l.as_ref(), r.as_ref()) {
                         (Ast::Num(1), Ast::Num(n)) | (Ast::Num(n), Ast::Num(1)) => Some(*n),
@@ -374,12 +376,14 @@ fn conv_psi(sub: Option<&Ast>, arg: &Ast) -> C {
                     },
                     _ => None,
                 };
-                if let Some(n) = last_n {
-                    if n >= 1 {
-                        let x = sum_of(&blocks[..blocks.len() - 1]);
-                        let base = conv_psi(Some(v), &x);
-                        return c_mul(base, C::OmegaPow(Box::new(C::Nat(n))));
-                    }
+                let peel = match last_n {
+                    Some(n) if n >= 1 => true,
+                    _ => blocks.len() >= 2 && is_below_omega1(&last),
+                };
+                if peel {
+                    let x = sum_of(&blocks[..blocks.len() - 1]);
+                    let base = conv_psi(Some(v), &x);
+                    return c_mul(base, C::OmegaPow(Box::new(conv_ord(&last))));
                 }
             }
             if let Some(c) = collapse_psi_next_cardinal(v, arg) {
@@ -1018,8 +1022,18 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
         let (h, m) = split_head_mult(b);
         match &h {
             Some(Head::Cardinal(s2)) if ast_eq(s2, s) => {
-                // Ω_s·X → ψ_{s-1}(Ω_s + M(X))
-                let xc = conv_sym(&card_arg_shift(s, &m));
+                // Ω_s·X → ψ_{s-1}(Ω_s + M(X)); a ψ_{pred} factor X fully
+                // collapses (ψ_1(Ω_2) → ψ_1(0)).
+                let is_psi_pred_factor = match &m {
+                    Ast::Psi(Some(sub), _) => ast_eq(sub, &pred),
+                    Ast::Mul(p, _) => matches!(p.as_ref(), Ast::Psi(Some(sub), _) if ast_eq(sub, &pred)),
+                    _ => false,
+                };
+                let xc = if is_psi_pred_factor {
+                    conv_ord(&m)
+                } else {
+                    conv_sym(&card_arg_shift(s, &m))
+                };
                 x_c.push(C::Psi(
                     Some(Box::new(conv_ord(&pred))),
                     Box::new(c_sum(vec![C::OmegaSub(Box::new(conv_ord(s))), xc])),
@@ -2480,6 +2494,16 @@ mod tests {
         assert_eq!(conv("ψ_1(Ω_2^ω+2)"), "\\psi_{1}(\\Omega_{2}^{\\omega})\\omega^{2}");
         assert_eq!(conv("ψ_1(Ω_2^2+2)"), "\\psi_{1}(\\Omega_{2})\\omega^{2}");
         assert_eq!(conv("ψ_1(Ω_2+2)"), "\\psi_{1}(0)\\omega^{2}");
+        assert_eq!(conv("ψ_1(Ω_2^ω+ω)"), "\\psi_{1}(\\Omega_{2}^{\\omega})\\omega^{\\omega}");
+        // An Ω_s·ψ_{s-1} tail factor fully collapses its ψ-argument.
+        assert_eq!(
+            conv("ψ(Ω_2^2+Ω_2×ψ_1(Ω_2))"),
+            "\\psi(\\Omega_{2} + \\psi_{1}(\\Omega_{2} + \\psi_{1}(0)))"
+        );
+        assert_eq!(
+            conv("ψ(Ω_ω+ψ_1(Ω_2^ω+ω))"),
+            "\\psi(\\Omega_{\\omega} + \\psi_{1}(\\Omega_{2}^{\\omega})\\omega^{\\omega})"
+        );
     }
 
     #[test]

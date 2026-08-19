@@ -534,3 +534,7 @@
 "ψ_1(Ω_2^2+2)","\psi_{1}(\Omega_{2})\omega^{2}"
 "ψ_1(Ω_2^2+3)","\psi_{1}(\Omega_{2})\omega^{3}"
 "ψ_1(Ω_2+2)","\psi_{1}(0)\omega^{2}"
+"ψ(Ω_2^2+Ω_2×ψ_1(Ω_2))","\psi(\Omega_{2} + \psi_{1}(\Omega_{2} + \psi_{1}(0)))"
+"ψ(Ω_ω+ψ_1(Ω_2^ω+ω))","\psi(\Omega_{\omega} + \psi_{1}(\Omega_{2}^{\omega})\omega^{\omega})"
+"ψ_1(Ω_2^ω+ω)","\psi_{1}(\Omega_{2}^{\omega})\omega^{\omega}"
+"ψ_1(Ω_2^ω+ω^2)","\psi_{1}(\Omega_{2}^{\omega})\omega^{\omega^{2}}"

@@ -362,6 +362,26 @@ fn conv_psi(sub: Option<&Ast>, arg: &Ast) -> C {
     match sub {
         None => conv_psi0(arg),
         Some(v) => {
+            // General rule: ψ_v(X + n) = ψ_v(X)·ω^n (finite n ≥ 1)
+            let mut blocks = Vec::new();
+            flatten_add(arg, &mut blocks);
+            if !blocks.is_empty() {
+                let last_n = match &blocks[blocks.len() - 1] {
+                    Ast::Num(n) => Some(*n),
+                    Ast::Mul(l, r) => match (l.as_ref(), r.as_ref()) {
+                        (Ast::Num(1), Ast::Num(n)) | (Ast::Num(n), Ast::Num(1)) => Some(*n),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(n) = last_n {
+                    if n >= 1 {
+                        let x = sum_of(&blocks[..blocks.len() - 1]);
+                        let base = conv_psi(Some(v), &x);
+                        return c_mul(base, C::OmegaPow(Box::new(C::Nat(n))));
+                    }
+                }
+            }
             if let Some(c) = collapse_psi_next_cardinal(v, arg) {
                 return c;
             }
@@ -2455,6 +2475,11 @@ mod tests {
         // A ψ_{s-1}(Ω_s) tail collapses its Ω_s lead: ψ_1(Ω_2) → ψ_1(0).
         assert_eq!(conv("ψ(Ω_2^2+ψ_1(Ω_2))"), "\\psi(\\Omega_{2} + \\psi_{1}(0))");
         assert_eq!(conv("ψ(Ω_2^3+ψ_1(Ω_2))"), "\\psi(\\Omega_{2}^{2} + \\psi_{1}(0))");
+        // General rule ψ_v(X + n) = ψ_v(X)·ω^n, unconditionally.
+        assert_eq!(conv("ψ_1(Ω_2^ω+1)"), "\\psi_{1}(\\Omega_{2}^{\\omega})\\omega");
+        assert_eq!(conv("ψ_1(Ω_2^ω+2)"), "\\psi_{1}(\\Omega_{2}^{\\omega})\\omega^{2}");
+        assert_eq!(conv("ψ_1(Ω_2^2+2)"), "\\psi_{1}(\\Omega_{2})\\omega^{2}");
+        assert_eq!(conv("ψ_1(Ω_2+2)"), "\\psi_{1}(0)\\omega^{2}");
     }
 
     #[test]
@@ -2555,3 +2580,4 @@ mod csv_audit {
         out
     }
 }
+

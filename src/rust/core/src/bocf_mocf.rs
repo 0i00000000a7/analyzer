@@ -650,8 +650,35 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                     merged_mult = sum_of(&all);
                 }
             }
-            let rest_blocks = &blocks[rest_start..];
-            let base_arg = if is_next {
+            let mut rest_blocks = &blocks[rest_start..];
+            // is_above: tail Ω_{v+1}·k folds to +k in the argument
+            // (ψ_1(Ω_3+Ω_2) → ψ_1(ψ_2(0)+1)).
+            let mut above_fold: Vec<Ast> = Vec::new();
+            if is_above {
+                let vp1: Ast = match v {
+                    Ast::Num(n) => Ast::Num(n + 1),
+                    other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
+                };
+                let mut i = 0usize;
+                while i < rest_blocks.len() {
+                    let mc = match &rest_blocks[i] {
+                        Ast::Omega(Some(t)) if ast_eq(t, &vp1) => Some(Ast::Num(1)),
+                        Ast::Mul(p, k) => match p.as_ref() {
+                            Ast::Omega(Some(t)) if ast_eq(t, &vp1) => Some((**k).clone()),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some(c) = mc {
+                        above_fold.push(c);
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                rest_blocks = &rest_blocks[i..];
+            }
+            let mut base_arg = if is_next {
                 sigma(&merged_mult)
             } else if is_above {
                 C::Psi(
@@ -661,6 +688,10 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
             } else {
                 conv_ord(&blocks[0])
             };
+            if !above_fold.is_empty() {
+                let fold_c = conv_ord(&sum_of(&above_fold));
+                base_arg = c_sum(vec![base_arg, fold_c]);
+            }
             let base = C::Psi(Some(Box::new(vc.clone())), Box::new(base_arg.clone()));
             let tail = sum_of(rest_blocks);
             if is_zero_ast(&tail) {
@@ -3224,6 +3255,12 @@ mod tests {
         // Finite-exponent lowering also applies above the collapse cardinal.
         assert_eq!(conv("ψ_1(Ω_3^2+Ω_3)"), "\\psi_{1}(\\Omega_{3} + 1)");
         assert_eq!(conv("ψ_1(Ω_(ω+1)^2+Ω_(ω+1))"), "\\psi_{1}(\\Omega_{\\omega + 1} + 1)");
+        // is_above lead with an Ω_{v+1} tail folds to +k
+        // (ψ_1(Ω_3+Ω_2) → ψ_1(ψ_2(0)+1)).
+        assert_eq!(conv("ψ_1(Ω_3+Ω_2)"), "\\psi_{1}(\\psi_{2}(0) + 1)");
+        assert_eq!(conv("ψ_1(Ω_3+Ω_2×2)"), "\\psi_{1}(\\psi_{2}(0) + 2)");
+        assert_eq!(conv("ψ_1(Ω_4+Ω_2)"), "\\psi_{1}(\\psi_{3}(0) + 1)");
+        assert_eq!(conv("ψ_1(Ω_3×2+Ω_2)"), "\\psi_{1}(\\psi_{2}(1) + 1)");
         // Finite-exponent lowering at ψ_v level (source rows 1084-1094).
         assert_eq!(conv("ψ_1(Ω_2^2+Ω_2)"), "\\psi_{1}(\\Omega_{2} + 1)");
         assert_eq!(conv("ψ_1(Ω_2^2×2)"), "\\psi_{1}(\\Omega_{2}2)");

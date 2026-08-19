@@ -1294,20 +1294,11 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
             _ => None,
         };
         if let Some((parg, pm)) = psi_pred {
-            let shifted = card_arg_shift(s, &parg);
-            let xc = if matches!(&pred, Ast::Num(_)) {
-                // Natural level: the ψ_{pred}-argument may start with the
-                // collapse cardinal Ω_{pred+1} (ψ_1(Ω_2) → ψ_1(0));
-                // collapse it, keeping the rest symbolic.
-                collapse_psi_next_cardinal(&pred, &shifted).unwrap_or_else(|| {
-                    C::Psi(Some(Box::new(conv_ord(&pred))), Box::new(conv_sym(&shifted)))
-                })
-            } else {
-                // Limit level (ψ_ω under an Ω_{ω+1}² lead): convert fully
-                // so the peel/σ machinery applies
-                // (ψ_ω(Ω_{ω+1}²+1) → ψ_ω(Ω_{ω+1})·ω).
-                conv_psi(Some(&pred), &shifted)
-            };
+            // Convert the ψ_{pred}-argument fully (σ-collapse, exponent
+            // lowering and peel all apply):
+            // ψ_1(Ω_2) → ψ_1(0), ψ_1(Ω_2²+Ω_2) → ψ_1(Ω_2+1),
+            // ψ_ω(Ω_{ω+1}²+1) → ψ_ω(Ω_{ω+1})·ω.
+            let xc = conv_psi(Some(&pred), &parg);
             if matches!(pm, Ast::Num(1)) {
                 x_c.push(xc);
             } else {
@@ -2837,6 +2828,12 @@ mod tests {
         assert_eq!(conv("ψ_1(Ω_2×2+ψ_1(Ω_2)×2)"), "\\psi_{1}(1)\\psi_{1}(0)^{2}");
         assert_eq!(conv("ψ_1(Ω_2×2+ψ_1(Ω_2+1))"), "\\psi_{1}(1)\\psi_{1}(0)^{\\omega}");
         assert_eq!(conv("ψ_1(Ω_2×3+ψ_1(Ω_2))"), "\\psi_{1}(2)\\psi_{1}(0)");
+        // Ω_{v+1}^2 lead with Ω_{v+1} tail: exponent lowers, tail folds +1
+        assert_eq!(conv("ψ_1(Ω_2^2+Ω_2)"), "\\psi_{1}(\\Omega_{2} + 1)");
+        assert_eq!(
+            conv("ψ(Ω_2^2+Ω_2×ψ_1(Ω_2^2+Ω_2)+ψ_1(Ω_2^2+Ω_2))"),
+            "\\psi(\\Omega_{2} + \\psi_{1}(\\Omega_{2} + \\psi_{1}(\\Omega_{2} + 1)) + \\psi_{1}(\\Omega_{2} + 1))"
+        );
         // Ω_{v+1}^e leads: finite exponent lowers, limit stays
         assert_eq!(conv("ψ_1(Ω_2^2)"), "\\psi_{1}(\\Omega_{2})");
         assert_eq!(conv("ψ_1(Ω_2^ω)"), "\\psi_{1}(\\Omega_{2}^{\\omega})");

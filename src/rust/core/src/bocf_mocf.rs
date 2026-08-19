@@ -833,6 +833,21 @@ fn finish_limit_tail(
         }
         return result;
     }
+    if is_next && !psi_blocks.is_empty() {
+        // mult ≠ 1: ψ_v-block tails contribute as ω^{ψ_v(σ(j))·e·m}
+        // (ψ_1(Ω_2×2+ψ_1(Ω_2)) → ψ_1(1)·ψ_1(0),
+        //  ψ_1(Ω_2×2+ψ_1(Ω_2)×2) → ψ_1(1)·ψ_1(0)²).
+        for b in &psi_blocks {
+            let (j, y, m) = as_psi_card_block(b, v, s).unwrap();
+            let base_j = C::Psi(Some(Box::new(vc.clone())), Box::new(sigma(&j)));
+            let e = e_val_level(v, s, &y);
+            factors.push(normalize_omegapow(c_mul(
+                base_j,
+                c_mul(e, conv_ord(&m)),
+            )));
+        }
+        psi_blocks.clear();
+    }
     // Limit-subscript level (ψ_ω, …) with a small-only tail:
     // ψ_v(Ω_s·k + n) = ψ_v(Ω_s·k + n−1)·ω (n ≥ 2); n = 1 stays in the
     // argument (rows 825-832).
@@ -1380,7 +1395,10 @@ fn collapse_cardinal_succ(s: &Ast, mult: &Ast, tail: &Ast) -> C {
     let mut merged = mult.clone();
     while !blocks.is_empty() {
         let (h, m) = split_head_mult(&blocks[0]);
-        if matches!(&h, Some(Head::Cardinal(t)) if ast_eq(t, s)) {
+        // Only ψ-free coefficients merge into the multiplier;
+        // ψ-containing tails stay and become factors
+        // (ψ_1(Ω_2×2+ψ_1(Ω_2)) → ψ_1(1)·ψ_1(0)).
+        if matches!(&h, Some(Head::Cardinal(t)) if ast_eq(t, s)) && !contains_psi_ast(&m) {
             merged = Ast::Add(Box::new(merged), Box::new(m));
             blocks.remove(0);
         } else {
@@ -2615,6 +2633,16 @@ fn lead_psi_sub(f: &C) -> Option<Option<C>> {
     }
 }
 
+fn contains_psi_ast(a: &Ast) -> bool {
+    match a {
+        Ast::Psi(..) => true,
+        Ast::Add(l, r) | Ast::Mul(l, r) | Ast::Pow(l, r) => {
+            contains_psi_ast(l) || contains_psi_ast(r)
+        }
+        _ => false,
+    }
+}
+
 fn contains_psi(c: &C) -> bool {
     match c {
         C::Psi(..) => true,
@@ -2803,6 +2831,12 @@ mod tests {
         assert_eq!(conv("ψ_1(Ω_2×2)"), "\\psi_{1}(1)");
         assert_eq!(conv("ψ_1(Ω_2×3)"), "\\psi_{1}(2)");
         assert_eq!(conv("ψ_1(Ω_2×ω)"), "\\psi_{1}(\\omega)");
+        // Ω_{v+1}·k (k ≥ 2) with ψ_v-block tails: tail becomes a factor
+        // (ψ_1(Ω_2×2+ψ_1(Ω_2)) → ψ_1(1)·ψ_1(0))
+        assert_eq!(conv("ψ_1(Ω_2×2+ψ_1(Ω_2))"), "\\psi_{1}(1)\\psi_{1}(0)");
+        assert_eq!(conv("ψ_1(Ω_2×2+ψ_1(Ω_2)×2)"), "\\psi_{1}(1)\\psi_{1}(0)^{2}");
+        assert_eq!(conv("ψ_1(Ω_2×2+ψ_1(Ω_2+1))"), "\\psi_{1}(1)\\psi_{1}(0)^{\\omega}");
+        assert_eq!(conv("ψ_1(Ω_2×3+ψ_1(Ω_2))"), "\\psi_{1}(2)\\psi_{1}(0)");
         // Ω_{v+1}^e leads: finite exponent lowers, limit stays
         assert_eq!(conv("ψ_1(Ω_2^2)"), "\\psi_{1}(\\Omega_{2})");
         assert_eq!(conv("ψ_1(Ω_2^ω)"), "\\psi_{1}(\\Omega_{2}^{\\omega})");

@@ -555,14 +555,29 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                         make_cardinalpow(&conv_ord(&s), &conv_ord(&pred_ord(&e))),
                         conv_ord(&mult),
                     );
+                    let vp1: Ast = match v {
+                        Ast::Num(n) => Ast::Num(n + 1),
+                        other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
+                    };
                     let mut parts: Vec<C> = vec![new_lead];
                     for b in &blocks[1..] {
-                        let (h2, _) = split_head_mult(b);
+                        let (h2, m2) = split_head_mult(b);
                         let is_s = match &h2 {
                             Some(Head::Cardinal(t)) => ast_eq(t, &s),
                             Some(Head::CardinalPow(t, _)) => ast_eq(t, &s),
                             _ => false,
                         };
+                        let is_vp1 = match &h2 {
+                            Some(Head::Cardinal(t)) => ast_eq(t, &vp1),
+                            Some(Head::CardinalPow(t, _)) => ast_eq(t, &vp1),
+                            _ => false,
+                        };
+                        if is_vp1 {
+                            // Ω_{v+1}·k tail folds to +k
+                            // (ψ_1(Ω_3^2+Ω_2) → ψ_1(Ω_3+1)).
+                            parts.push(conv_ord(&m2));
+                            continue;
+                        }
                         if !is_s {
                             return None;
                         }

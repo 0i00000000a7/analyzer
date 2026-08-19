@@ -94,6 +94,53 @@ fn is_below_omega1(a: &Ast) -> bool {
     }
 }
 
+/// Conservative ordinal comparison a < b on subscript-shaped ASTs.
+fn sub_ord_lt(a: &Ast, b: &Ast) -> bool {
+    if ast_eq(a, b) {
+        return false;
+    }
+    match (a, b) {
+        (Ast::Num(x), Ast::Num(y)) => x < y,
+        (Ast::Num(_), Ast::W) => true,
+        (Ast::Num(_), Ast::Omega(_)) => true,
+        (Ast::Num(_), Ast::Psi(Some(_), _)) => true,
+        (Ast::Num(_), Ast::Add(l, _)) => sub_ord_leq(a, l),
+        (Ast::W, Ast::Omega(_)) => true,
+        (Ast::W, Ast::Psi(Some(_), _)) => true,
+        (Ast::W, Ast::Add(l, _)) => sub_ord_leq(a, l),
+        (Ast::Omega(Some(x)), Ast::Omega(Some(y))) => sub_ord_lt(x, y),
+        (Ast::Omega(Some(x)), Ast::Psi(Some(u), _)) => sub_ord_lt(x, u),
+        (Ast::Omega(Some(_)), Ast::Add(l, _)) => sub_ord_leq(a, l),
+        (Ast::Omega(None), Ast::Add(l, _)) => sub_ord_leq(a, l),
+        (Ast::Psi(Some(u), _), Ast::Omega(Some(y))) => sub_ord_lt(u, y),
+        (Ast::Psi(Some(_), _), Ast::Add(l, _)) => sub_ord_leq(a, l),
+        (Ast::Add(l, _), _) => sub_ord_lt(l, b),
+        (Ast::Mul(l, _), _) => sub_ord_lt(l, b),
+        (Ast::Pow(base, e1), Ast::Pow(base2, e2)) if ast_eq(base, base2) => sub_ord_lt(e1, e2),
+        (Ast::Pow(base, _), _) => sub_ord_lt(base, b),
+        _ => false,
+    }
+}
+
+fn sub_ord_leq(a: &Ast, b: &Ast) -> bool {
+    ast_eq(a, b) || sub_ord_lt(a, b)
+}
+
+/// True if b < Ω_{v+1}.  Any ψ_a(b) and its operations with values below
+/// Ω_{a+1} stay below Ω_{a+1}, so ψ-blocks with a ≤ v (and products,
+/// powers and sums of such blocks) qualify.
+fn below_next_cardinal(v: &Ast, b: &Ast) -> bool {
+    match b {
+        Ast::Num(_) | Ast::W | Ast::Psi(None, _) => true,
+        Ast::Psi(Some(u), _) => sub_ord_leq(u, v),
+        Ast::Omega(None) => !matches!(v, Ast::Num(0)),
+        Ast::Omega(Some(t)) => sub_ord_leq(t, v),
+        Ast::Pow(base, _) => below_next_cardinal(v, base),
+        Ast::Mul(l, r) => below_next_cardinal(v, l) && below_next_cardinal(v, r),
+        Ast::Add(l, r) => below_next_cardinal(v, l) && below_next_cardinal(v, r),
+    }
+}
+
 /// The leading (largest) cardinal-power shape of a primitive block.
 #[derive(Clone, Debug)]
 enum Head {
@@ -362,8 +409,12 @@ fn conv_psi(sub: Option<&Ast>, arg: &Ast) -> C {
     match sub {
         None => conv_psi0(arg),
         Some(v) => {
+            if let Some(c) = collapse_psi_next_cardinal(v, arg) {
+                return c;
+            }
             // General rule: ψ_v(X + β) = ψ_v(X)·ω^β for any trailing
-            // β < Ω_1 (finite n, ω, ω^ω, …); finite n peels unconditionally.
+            // β < Ω_{v+1} (any ψ_a(b) and its operations with values below
+            // Ω_{a+1} stay below Ω_{a+1}); finite n peels unconditionally.
             let mut blocks = Vec::new();
             flatten_add(arg, &mut blocks);
             if !blocks.is_empty() {
@@ -378,16 +429,13 @@ fn conv_psi(sub: Option<&Ast>, arg: &Ast) -> C {
                 };
                 let peel = match last_n {
                     Some(n) if n >= 1 => true,
-                    _ => blocks.len() >= 2 && is_below_omega1(&last),
+                    _ => blocks.len() >= 2 && below_next_cardinal(v, &last),
                 };
                 if peel {
                     let x = sum_of(&blocks[..blocks.len() - 1]);
                     let base = conv_psi(Some(v), &x);
                     return c_mul(base, C::OmegaPow(Box::new(conv_ord(&last))));
                 }
-            }
-            if let Some(c) = collapse_psi_next_cardinal(v, arg) {
-                return c;
             }
             // Level-shift: the subscript collapses the next cardinal.
             let vc = conv_ord(v);
@@ -412,7 +460,7 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
     let (head_opt, mult) = split_head_mult(&blocks[0]);
     let vc = conv_ord(v);
     match head_opt {
-        Some(Head::CardinalPow(s, _e)) => {
+        Some(Head::CardinalPow(s, e)) => {
             // Successor-cardinal powers lower their exponent by one
             // (translate_down); limit exponents stay. Applies both to the
             // collapse cardinal Ω_{v+1} and to successor leads above it.
@@ -439,7 +487,38 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                     v, &vc, &s, &blocks[0], base_arg, &blocks[1..], false, true, collapse_sub,
                 ));
             }
-            if !matches!(mult, Ast::Num(1)) || blocks.len() > 1 {
+            if !matches!(mult, Ast::Num(1)) {
+                return None;
+            }
+            if blocks.len() > 1 {
+                if is_next && as_nat(&e).is_none() {
+                    // Limit-exponent lead Ω_{v+1}^λ stays; an Ω_{v+1}-built
+                    // tail translates down into a ψ₀-argument:
+                    // ψ_1(Ω_2^ω + Ω_2·k) → ψ(Ω_2^ω + k),
+                    // ψ_1(Ω_2^ω + Ω_2^2) → ψ(Ω_2^ω + Ω_2).
+                    let mut parts: Vec<C> = vec![conv_ord(&blocks[0])];
+                    for b in &blocks[1..] {
+                        let (h2, _) = split_head_mult(b);
+                        let ok = match &h2 {
+                            Some(Head::Cardinal(t)) => ast_eq(t, &s),
+                            Some(Head::CardinalPow(t, _)) => ast_eq(t, &s),
+                            _ => false,
+                        };
+                        if !ok {
+                            return None;
+                        }
+                        // Ω_s → 1, Ω_s·k → k, Ω_s^e → Ω_s^{e-1}
+                        let tb = match b {
+                            Ast::Omega(Some(_)) => Ast::Num(1),
+                            Ast::Mul(p, k) if matches!(p.as_ref(), Ast::Omega(Some(_))) => {
+                                (**k).clone()
+                            }
+                            _ => translate_down(b),
+                        };
+                        parts.push(conv_ord(&tb));
+                    }
+                    return Some(C::Psi(None, Box::new(c_sum(parts))));
+                }
                 return None;
             }
             let translated = translate_down(&blocks[0]);
@@ -2504,6 +2583,13 @@ mod tests {
             conv("ψ(Ω_ω+ψ_1(Ω_2^ω+ω))"),
             "\\psi(\\Omega_{\\omega} + \\psi_{1}(\\Omega_{2}^{\\omega})\\omega^{\\omega})"
         );
+        // Ω < Ω_{v+1} peels as ×ω^Ω = ×Ω.
+        assert_eq!(conv("ψ_1(Ω_2^ω+Ω)"), "\\psi_{1}(\\Omega_{2}^{\\omega})\\Omega");
+        // Ω_{v+1}-built tails under a limit-exponent lead translate down
+        // into a ψ₀-argument.
+        assert_eq!(conv("ψ_1(Ω_2^ω+Ω_2)"), "\\psi(\\Omega_{2}^{\\omega} + 1)");
+        assert_eq!(conv("ψ_1(Ω_2^ω+Ω_2×2)"), "\\psi(\\Omega_{2}^{\\omega} + 2)");
+        assert_eq!(conv("ψ_1(Ω_2^ω+Ω_2^2)"), "\\psi(\\Omega_{2}^{\\omega} + \\Omega_{2})");
     }
 
     #[test]

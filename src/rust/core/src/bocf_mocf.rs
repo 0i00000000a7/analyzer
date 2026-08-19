@@ -212,6 +212,15 @@ fn translate_down(block: &Ast) -> Ast {
             }
         }
         Ast::Pow(b, e) if matches!(b.as_ref(), Ast::Omega(Some(_))) => {
+            // True-limit subscripts (Ω_ω, Ω_Ω, …) keep their powers;
+            // successor subscripts lower a finite exponent by one.
+            let is_limit_sub = match b.as_ref() {
+                Ast::Omega(Some(sub)) => !is_successor_ord(sub) && !matches!(sub.as_ref(), Ast::Num(_)),
+                _ => false,
+            };
+            if is_limit_sub {
+                return block.clone();
+            }
             if let Some(n) = as_nat(e) {
                 if n >= 2 {
                     Ast::Pow(b.clone(), Box::new(Ast::Num(n - 1)))
@@ -318,7 +327,11 @@ fn term_to_ast(q: &crate::term::Term) -> Ast {
         let head = tm::first_term(&cur);
         let (run, rest) = tm::separate(&cur, &head);
         let count = tm::length1(&run);
-        let part = term_block_ast(&head, count);
+        let part = if tm::is_ordinal_finite(&run) {
+            Ast::Num(count)
+        } else {
+            term_block_ast(&head, count)
+        };
         parts.push(part);
         cur = rest;
     }
@@ -451,6 +464,19 @@ fn conv_psi(sub: Option<&Ast>, arg: &Ast) -> C {
 /// (conv_sym keeps ψ(0) symbolic so ω^{ψ(0)} absorbs to ψ(0)), and Ω-power
 /// parts stay as factors.  A bare Ω_{v+1}^e lead collapses by lowering a
 /// finite exponent (e ≥ 2) and keeps limit exponents.
+/// True if s is a limit-multiple subscript: λ·k with λ limit, k ≥ 2
+/// (ω×2, Ω×2, Ω_ω×2, …). These keep their lead instead of σ-collapsing.
+fn is_limit_multiple(s: &Ast) -> bool {
+    match s {
+        Ast::Mul(l, r) => {
+            !matches!(l.as_ref(), Ast::Num(_))
+                && !is_successor_ord(l)
+                && as_nat(r).map_or(false, |n| n >= 2)
+        }
+        _ => false,
+    }
+}
+
 fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
     let mut blocks = Vec::new();
     flatten_add(arg, &mut blocks);
@@ -464,7 +490,7 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
             // Successor-cardinal powers lower their exponent by one
             // (translate_down); limit exponents stay. Applies both to the
             // collapse cardinal Ω_{v+1} and to successor leads above it.
-            let is_next = ast_eq(&pred_ord(&s), v);
+            let is_next = ast_eq(&pred_ord(&s), v) && !is_limit_multiple(&s);
             let is_limit_lead = !is_successor_ord(&s) && !matches!(&s, Ast::Num(_));
             let v_nat = as_nat(v);
             let s_nat = as_nat(&s);
@@ -487,10 +513,10 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                     v, &vc, &s, &blocks[0], base_arg, &blocks[1..], false, true, collapse_sub,
                 ));
             }
-            if !matches!(mult, Ast::Num(1)) {
+            if !matches!(mult, Ast::Num(1)) && as_nat(&e).map_or(true, |n| n < 2) {
                 return None;
             }
-            if blocks.len() > 1 {
+            if blocks.len() > 1 || !matches!(mult, Ast::Num(1)) {
                 if is_next && as_nat(&e).is_none() {
                     // Limit-exponent lead Ω_{v+1}^λ stays; an Ω_{v+1}-built
                     // tail translates down into a ψ₀-argument:
@@ -517,7 +543,41 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                         };
                         parts.push(conv_ord(&tb));
                     }
-                    return Some(C::Psi(None, Box::new(c_sum(parts))));
+                    return Some(C::Psi(Some(Box::new(vc)), Box::new(c_sum(parts))));
+                }
+                if (is_next || is_above) && as_nat(&e).map_or(false, |n| n >= 2) {
+                    // Finite-exponent lead lowers by one, keeping the
+                    // multiplier; Ω_s-built tails divide by Ω_s
+                    // (ψ_1(Ω_2^2+Ω_2·X) → ψ_1(Ω_2+X),
+                    //  ψ_1(Ω_3^2+Ω_3) → ψ_1(Ω_3+1)):
+                    //   Ω_s → 1, Ω_s·X → conv(X), Ω_s^e → Ω_s^{e-1}.
+                    let new_lead = c_mul(
+                        make_cardinalpow(&conv_ord(&s), &conv_ord(&pred_ord(&e))),
+                        conv_ord(&mult),
+                    );
+                    let mut parts: Vec<C> = vec![new_lead];
+                    for b in &blocks[1..] {
+                        let (h2, _) = split_head_mult(b);
+                        let is_s = match &h2 {
+                            Some(Head::Cardinal(t)) => ast_eq(t, &s),
+                            Some(Head::CardinalPow(t, _)) => ast_eq(t, &s),
+                            _ => false,
+                        };
+                        if !is_s {
+                            return None;
+                        }
+                        let tc = match b {
+                            Ast::Omega(Some(_)) => C::Nat(1),
+                            Ast::Mul(p, k)
+                                if matches!(p.as_ref(), Ast::Omega(Some(_))) =>
+                            {
+                                conv_ord(k)
+                            }
+                            _ => conv_ord(&translate_down(b)),
+                        };
+                        parts.push(tc);
+                    }
+                    return Some(C::Psi(Some(Box::new(vc)), Box::new(c_sum(parts))));
                 }
                 return None;
             }
@@ -531,7 +591,7 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
             // s = v+1 → the lead collapses to ψ_v(σ(k)); a limit subscript
             // (e.g. Ω_ω) keeps the base ψ_v(Ω_s·k) unchanged; a successor
             // lead above Ω_{v+1} collapses to ψ_{s-1}(σ(k)) as ψ_v's argument.
-            let is_next = ast_eq(&pred_ord(&s), v);
+            let is_next = ast_eq(&pred_ord(&s), v) && !is_limit_multiple(&s);
             let is_limit_lead = !is_successor_ord(&s) && !matches!(&s, Ast::Num(_));
             let v_nat = as_nat(v);
             let s_nat = as_nat(&s);
@@ -546,8 +606,38 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
             if !is_next && !is_limit_lead && !is_above {
                 return None;
             }
+            // Ω_s·k + Ω_s·m + rest = Ω_s·(k+m) + rest: merge contiguous
+            // Ω_s-multiple tail blocks into the multiplier
+            // (ψ_1(Ω_2·ψ_1(Ω_2)+Ω_2) → ψ_1(ψ_1(0)+1)).
+            let mut merged_mult = mult.clone();
+            let mut rest_start = 1usize;
+            if is_next {
+                let mut extra: Vec<Ast> = Vec::new();
+                for b in &blocks[1..] {
+                    let mc = match b {
+                        Ast::Omega(Some(t)) if ast_eq(t, &s) => Some(Ast::Num(1)),
+                        Ast::Mul(p, k) => match p.as_ref() {
+                            Ast::Omega(Some(t)) if ast_eq(t, &s) => Some((**k).clone()),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some(c) = mc {
+                        extra.push(c);
+                        rest_start += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if !extra.is_empty() {
+                    let mut all = vec![merged_mult];
+                    all.extend(extra);
+                    merged_mult = sum_of(&all);
+                }
+            }
+            let rest_blocks = &blocks[rest_start..];
             let base_arg = if is_next {
-                sigma(&mult)
+                sigma(&merged_mult)
             } else if is_above {
                 C::Psi(
                     Some(Box::new(conv_ord(&pred_ord(&s)))),
@@ -557,12 +647,12 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                 conv_ord(&blocks[0])
             };
             let base = C::Psi(Some(Box::new(vc.clone())), Box::new(base_arg.clone()));
-            let tail = sum_of(&blocks[1..]);
+            let tail = sum_of(rest_blocks);
             if is_zero_ast(&tail) {
                 return Some(base);
             }
             Some(finish_limit_tail(
-                v, &vc, &s, &blocks[0], base_arg, &blocks[1..], is_next, is_limit_lead, collapse_sub,
+                v, &vc, &s, &blocks[0], base_arg, rest_blocks, is_next, is_limit_lead, collapse_sub,
             ))
         }
         _ => None,
@@ -615,7 +705,14 @@ fn finish_limit_tail(
             let f = collapse_psi_next_cardinal(v, &farg).unwrap_or_else(|| {
                 C::Psi(Some(Box::new(vc.clone())), Box::new(conv_at_level(v, &farg)))
             });
-            factors.push(c_mul(f, conv_ord(&m)));
+            let fc = c_mul(f, conv_ord(&m));
+            if matches!(v, Ast::Num(_)) {
+                factors.push(fc);
+            } else {
+                // ψ_ω-level: the factor enters as ω^{…}
+                // (ψ_ω(Ω_{ω×2}+ψ_ω(Ω_{ω×2}+Ω)) → ψ_ω(Ω_{ω×2})^Ω).
+                factors.push(normalize_omegapow(fc));
+            }
         } else if let Some((lead_pow, j, y, m)) = as_psi_cardpow_block(b, v, s) {
             // limit-lead: ψ_v(Ω_s^e·j + y)·m recurses as a plain factor
             let om_j = Ast::Mul(Box::new(lead_pow), Box::new(j));
@@ -637,6 +734,31 @@ fn finish_limit_tail(
             match &h2 {
                 Some(Head::Cardinal(s2)) => {
                     let s2_nat = as_nat(s2);
+                    let vp1: Ast = match v {
+                        Ast::Num(n) => Ast::Num(n + 1),
+                        other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
+                    };
+                    let is_collapse_card = matches!((s2_nat, collapse_sub), (Some(a), Some(cs)) if a == cs)
+                        || ast_eq(s2, &vp1);
+                    let above_collapse = sub_ord_lt(&vp1, s2);
+                    if is_limit_lead && !matches!(v, Ast::Num(0)) && !is_collapse_card && above_collapse {
+                        // v ≥ 1: a tail cardinal above the collapse
+                        // cardinal Ω_{v+1} (e.g. Ω_ω > Ω_2 inside ψ_1)
+                        // stays whole in the argument; Ω_{u+1}·ψ_u(X)
+                        // becomes ψ_u(X′ + ψ_u(X′)).
+                        if let Some(f) = collapse_card_mul_psi(b) {
+                            limit_arg_parts.push(f);
+                        } else {
+                            limit_arg_parts.push(conv_ord(b));
+                        }
+                        continue;
+                    }
+                    if is_collapse_card {
+                        // Ω_{v+1}·m tail folds to +m at any level
+                        // (ψ_ω(Ω_{ω×2}+Ω_{ω+1}) → ψ_ω(Ω_{ω×2}+1)).
+                        limit_arg_parts.push(conv_ord(&m2));
+                        continue;
+                    }
                     match (s2_nat, collapse_sub) {
                         (Some(s2n), Some(csn)) if s2n == csn => {
                             limit_arg_parts.push(conv_ord(&m2));
@@ -656,11 +778,24 @@ fn finish_limit_tail(
                     }
                 }
                 _ => {
-                    limit_arg_parts.push(conv_ord(&translate_down(b)));
+                    if matches!(v, Ast::Num(_)) {
+                        limit_arg_parts.push(conv_ord(&translate_down(b)));
+                    } else {
+                        // ψ_ω-level: tails below the collapse cardinal peel
+                        // as ω^β (ψ_ω(Ω_{ω×2}+Ω) → ψ_ω(Ω_{ω×2})·Ω).
+                        factors.push(normalize_omegapow(conv_ord(b)));
+                    }
                 }
             }
         } else {
-            factors.push(conv_ord(b));
+            // At limit-subscript levels (ψ_ω, …), tail values contribute
+            // as ω^β (ψ_ω(Ω_{ω+1}·Ω+Ω_ω²) → ψ_ω(Ω)·Ω_ω^{Ω_ω}); natural
+            // levels keep the literal factor (ψ_1(Ω_2+Ω²) → ψ_1(0)·Ω²).
+            if matches!(v, Ast::Num(_)) {
+                factors.push(conv_ord(b));
+            } else {
+                factors.push(normalize_omegapow(conv_ord(b)));
+            }
         }
     }
     // Ω_{v+1} lead (mult 1) with ψ_v-block tails: exponent machinery,
@@ -697,6 +832,38 @@ fn finish_limit_tail(
             result = c_mul(result, f);
         }
         return result;
+    }
+    // Limit-subscript level (ψ_ω, …) with a small-only tail:
+    // ψ_v(Ω_s·k + n) = ψ_v(Ω_s·k + n−1)·ω (n ≥ 2); n = 1 stays in the
+    // argument (rows 825-832).
+    let own_floor = ast_eq(s, v);
+    if !matches!(v, Ast::Num(_))
+        && is_limit_lead
+        && own_floor
+        && psi_blocks.is_empty()
+        && limit_arg_parts.is_empty()
+        && factors.is_empty()
+        && !small.is_empty()
+    {
+        let mut total = 0i32;
+        let mut all_nat = true;
+        for b in &small {
+            if let Ast::Num(n) = b { total += n; } else { all_nat = false; break; }
+        }
+        if all_nat && total >= 1 {
+            let n = total;
+            if n == 1 {
+                return C::Psi(
+                    Some(Box::new(vc.clone())),
+                    Box::new(c_sum(vec![base_arg, C::Nat(1)])),
+                );
+            }
+            let argp = c_sum(vec![base_arg, c_nat(n - 1)]);
+            return c_mul(
+                C::Psi(Some(Box::new(vc.clone())), Box::new(argp)),
+                C::OmegaPow(Box::new(C::Nat(1))),
+            );
+        }
     }
     let mut result = if is_limit_lead && !limit_arg_parts.is_empty() {
         let mut arg_parts = vec![base_arg];
@@ -747,6 +914,15 @@ fn conv_at_level(v: &Ast, arg: &Ast) -> C {
                     let headc = conv_ord(&blocks[0]);
                     c_sum(vec![headc, conv_ord(&tail)])
                 }
+            } else if is_successor_ord(&s)
+                && (next.is_some() || sub_ord_lt(v, &pred_ord(&s)))
+            {
+                // Successor subscript above the collapse cardinal
+                // (e.g. Ω_{ω+1} in a ψ_1-argument, Ω_{ω+2} in a
+                // ψ_ω-argument): Ω_s·k ↦ ψ_{s-1}(σ(k)).
+                let ps = pred_ord(&s);
+                let inner = C::Psi(Some(Box::new(conv_ord(&ps))), Box::new(sigma(&mult)));
+                c_sum(vec![inner, conv_ord(&tail)])
             } else {
                 let headc = conv_ord(&blocks[0]);
                 c_sum(vec![headc, conv_ord(&tail)])
@@ -772,6 +948,19 @@ fn sigma(k: &Ast) -> C {
 }
 
 /// The level-0 collapse ψ₀(arg).
+/// True if b < Ω_idx (conservative ordinal comparison for fold rules).
+fn below_omega_idx(idx: &Ast, b: &Ast) -> bool {
+    match b {
+        Ast::Num(_) | Ast::W | Ast::Psi(None, _) => true,
+        Ast::Omega(None) => sub_ord_lt(&Ast::Num(1), idx),
+        Ast::Omega(Some(t)) => sub_ord_lt(t, idx),
+        Ast::Psi(Some(u), _) => sub_ord_lt(u, idx),
+        Ast::Pow(base, _) => below_omega_idx(idx, base),
+        Ast::Mul(l, r) => below_omega_idx(idx, l) && below_omega_idx(idx, r),
+        Ast::Add(l, r) => below_omega_idx(idx, l) && below_omega_idx(idx, r),
+    }
+}
+
 fn conv_psi0(arg: &Ast) -> C {
     let mut blocks = Vec::new();
     flatten_add(arg, &mut blocks);
@@ -822,11 +1011,12 @@ fn conv_psi0(arg: &Ast) -> C {
                     if is_successor_ord(&s) {
                         collapse_cardinalpow_succ(&s, n, &mult, &tail)
                     } else {
-                        collapse_fixed(make_cardinalpow(&conv_ord(&s), &conv_ord(&e)), &mult, &tail)
+                        collapse_fixed_kind(make_cardinalpow(&conv_ord(&s), &conv_ord(&e)), &mult, &tail, true)
                     }
                 }
             } else {
-                collapse_fixed(make_cardinalpow(&conv_ord(&s), &conv_ord(&e)), &mult, &tail)
+                let lim = !is_successor_ord(&s) && !matches!(&s, Ast::Num(_));
+                collapse_fixed_kind(make_cardinalpow(&conv_ord(&s), &conv_ord(&e)), &mult, &tail, lim)
             }
         }
     }
@@ -1061,7 +1251,11 @@ fn raw_arg_for(b: &Ast) -> Option<C> {
 /// ψ_{sub-1}-arguments shift Ω_sub-powers down by one.
 fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
     let pred = pred_ord(s);
-    let convk = conv_sym(&card_arg_shift(s, mult));
+    let convk = if matches!(s, Ast::Num(_)) {
+        conv_sym(&card_arg_shift(s, mult))
+    } else {
+        conv_ord(mult)
+    };
     let lead = c_mul(make_cardinalpow(&conv_ord(s), &c_nat(n - 1)), convk);
     let mut blocks = Vec::new();
     flatten_add(tail, &mut blocks);
@@ -1085,12 +1279,20 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
             _ => None,
         };
         if let Some((parg, pm)) = psi_pred {
-            // The ψ_{pred}-argument may itself start with the collapse
-            // cardinal Ω_{pred+1} (e.g. ψ_1(Ω_2) → ψ_1(0)); collapse it.
             let shifted = card_arg_shift(s, &parg);
-            let xc = collapse_psi_next_cardinal(&pred, &shifted).unwrap_or_else(|| {
-                C::Psi(Some(Box::new(conv_ord(&pred))), Box::new(conv_sym(&shifted)))
-            });
+            let xc = if matches!(&pred, Ast::Num(_)) {
+                // Natural level: the ψ_{pred}-argument may start with the
+                // collapse cardinal Ω_{pred+1} (ψ_1(Ω_2) → ψ_1(0));
+                // collapse it, keeping the rest symbolic.
+                collapse_psi_next_cardinal(&pred, &shifted).unwrap_or_else(|| {
+                    C::Psi(Some(Box::new(conv_ord(&pred))), Box::new(conv_sym(&shifted)))
+                })
+            } else {
+                // Limit level (ψ_ω under an Ω_{ω+1}² lead): convert fully
+                // so the peel/σ machinery applies
+                // (ψ_ω(Ω_{ω+1}²+1) → ψ_ω(Ω_{ω+1})·ω).
+                conv_psi(Some(&pred), &shifted)
+            };
             if matches!(pm, Ast::Num(1)) {
                 x_c.push(xc);
             } else {
@@ -1169,27 +1371,106 @@ fn card_arg_shift(s: &Ast, a: &Ast) -> Ast {
 fn collapse_cardinal_succ(s: &Ast, mult: &Ast, tail: &Ast) -> C {
     let sub_idx = pred_ord(s);
     let vc = conv_ord(&sub_idx);
-    let inner = C::Psi(Some(Box::new(vc.clone())), Box::new(sigma(mult)));
 
     let mut blocks = Vec::new();
     flatten_add(tail, &mut blocks);
+    // Ω_s·k + Ω_s·m… = Ω_s·(k+m…): merge contiguous Ω_s-multiple tail
+    // blocks into the multiplier (rows 1132-1135:
+    // ψ(Ω_{ω+1}·Ω+Ω_{ω+1}) → ψ(ψ_ω(Ω+1))).
+    let mut merged = mult.clone();
+    while !blocks.is_empty() {
+        let (h, m) = split_head_mult(&blocks[0]);
+        if matches!(&h, Some(Head::Cardinal(t)) if ast_eq(t, s)) {
+            merged = Ast::Add(Box::new(merged), Box::new(m));
+            blocks.remove(0);
+        } else {
+            break;
+        }
+    }
+    if is_limit_multiple(s) {
+        // λ·k subscripts: no σ-collapse; the lead stays
+        // (ψ(Ω_{ω×2}+ψ_ω(Ω_{ω×2})) keeps Ω_{ω×2}). Bare ψ_0(Ω_{λ·k})
+        // collapses to ψ_λ(Ω_λ·(k−1)).
+        let lam = match s { Ast::Mul(l, _) => (**l).clone(), _ => unreachable!() };
+        let kk = match s { Ast::Mul(_, r) => as_nat(r).unwrap_or(1), _ => 1 };
+        let lead = c_mul(C::OmegaSub(Box::new(conv_ord(s))), conv_ord(&merged));
+        if blocks.is_empty() {
+            if matches!(merged, Ast::Num(1)) {
+                let argp = if kk - 1 <= 1 {
+                    C::OmegaSub(Box::new(conv_ord(&lam)))
+                } else {
+                    c_mul(C::OmegaSub(Box::new(conv_ord(&lam))), c_nat(kk - 1))
+                };
+                return C::Psi(Some(Box::new(conv_ord(&lam))), Box::new(argp));
+            }
+            return C::Psi(None, Box::new(lead));
+        }
+        let mut x_c: Vec<C> = Vec::new();
+        let mut w_parts2: Vec<Ast> = Vec::new();
+        for b in &blocks {
+            if is_below_omega1(b) {
+                w_parts2.push(b.clone());
+                continue;
+            }
+            let (h, m) = split_head_mult(b);
+            match &h {
+                Some(Head::Cardinal(s2)) if is_successor_ord(s2) && !matches!(s2, Ast::Num(1)) && as_nat(s2).map_or(true, |n| n >= 2) => {
+                    let mut parts = vec![lead.clone()];
+                    parts.extend(x_c.iter().cloned());
+                    parts.push(conv_ord(&m));
+                    x_c.push(C::Psi(
+                        Some(Box::new(conv_ord(&pred_ord(s2)))),
+                        Box::new(c_sum(parts)),
+                    ));
+                }
+                _ => {
+                    x_c.push(conv_ord(&translate_down(b)));
+                }
+            }
+        }
+        let mut parts = vec![lead];
+        parts.extend(x_c);
+        let psi = C::Psi(None, Box::new(c_sum(parts)));
+        let w = sum_of(&w_parts2);
+        return if is_zero_ast(&w) { psi } else { c_mul(psi, C::OmegaPow(Box::new(conv_ord(&w)))) };
+    }
+    let inner = C::Psi(Some(Box::new(vc.clone())), Box::new(sigma(&merged)));
     let mut x_parts: Vec<Ast> = Vec::new();
     let mut w_parts: Vec<Ast> = Vec::new();
-    let mut contribs: Vec<C> = Vec::new();
+    let mut arg_parts: Vec<C> = vec![inner];
     for b in &blocks {
         if let Some((j, y, m)) = as_psi_card_block(b, &sub_idx, s) {
             let base_j = C::Psi(Some(Box::new(vc.clone())), Box::new(sigma(&j)));
             let e = e_val_level(&sub_idx, s, &y);
-            contribs.push(c_mul(base_j, c_mul(e, conv_ord(&m))));
+            arg_parts.push(c_mul(base_j, c_mul(e, conv_ord(&m))));
         } else if is_below_omega1(b) {
             w_parts.push(b.clone());
         } else {
-            x_parts.push(translate_down(b));
+            let (h, m) = split_head_mult(b);
+            let succ_fold = match &h {
+                Some(Head::Cardinal(s2)) => {
+                    !matches!(s, Ast::Num(_))
+                        && is_successor_ord(s2)
+                        && !matches!(s2, Ast::Num(1))
+                        && as_nat(s2).map_or(true, |n| n >= 2)
+                }
+                _ => false,
+            };
+            if succ_fold {
+                let s2 = match &h { Some(Head::Cardinal(s2)) => s2.clone(), _ => unreachable!() };
+                let mut parts = arg_parts.clone();
+                parts.push(conv_ord(&m));
+                arg_parts.push(C::Psi(
+                    Some(Box::new(conv_ord(&pred_ord(&s2)))),
+                    Box::new(c_sum(parts)),
+                ));
+            } else {
+                x_parts.push(translate_down(b));
+            }
         }
     }
     let x_c = if x_parts.is_empty() { C::Zero } else { conv_ord(&sum_of(&x_parts)) };
-    let mut parts: Vec<C> = vec![inner];
-    parts.extend(contribs);
+    let mut parts: Vec<C> = arg_parts;
     if !is_c_zero(&x_c) {
         parts.push(x_c);
     }
@@ -1277,6 +1558,11 @@ fn e_val_level(v_ast: &Ast, s_ast: &Ast, y: &Ast) -> C {
             C::Pow(Box::new(base), Box::new(exp))
         };
     }
+    if !matches!(v_ast, Ast::Num(_)) {
+        // Limit levels (ψ_ω, …): full conversion, then ω^ normalization
+        // (ω^{Ω_ω²} → Ω_ω^{Ω_ω}, ω^{ψ-block} absorbs to the ψ-block).
+        return normalize_omegapow(conv_ord(y));
+    }
     let mc = conv_struct_level(v_ast, s_ast, y);
     if is_below_c(&mc) {
         C::OmegaPow(Box::new(mc))
@@ -1327,7 +1613,34 @@ fn is_below_c(c: &C) -> bool {
 /// ψ₀(lead · k + r) → ψ(lead·k + x) · ω^{T(w)} (lead is a fixed point).
 /// ψ_v-blocks in the tail evaluate; Ω-power blocks keep ψ-values inside
 /// their exponents symbolic (rows 450 vs 454).
+/// Ω_{u+1}·ψ_u(X) → ψ_u(T(X) + ψ_u(T(X))) (rows 1108-style tails).
+fn collapse_card_mul_psi(b: &Ast) -> Option<C> {
+    if let Ast::Mul(p, k) = b {
+        if let Ast::Omega(Some(idx)) = p.as_ref() {
+            if is_successor_ord(idx) {
+                let u = pred_ord(idx);
+                if let Ast::Psi(Some(sub), x) = k.as_ref() {
+                    if ast_eq(sub, &u) {
+                        let tx = translate_down(x);
+                        let inner = conv_psi(Some(&u), &tx);
+                        let argc = conv_ord(&tx);
+                        return Some(C::Psi(
+                            Some(Box::new(conv_ord(&u))),
+                            Box::new(c_sum(vec![argc, inner])),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn collapse_fixed(lead: C, mult: &Ast, tail: &Ast) -> C {
+    collapse_fixed_kind(lead, mult, tail, false)
+}
+
+fn collapse_fixed_kind(lead: C, mult: &Ast, tail: &Ast, limit_card_pow: bool) -> C {
     let convk = conv_ord(mult);
     let lead = c_mul(lead, convk);
     let mut blocks = Vec::new();
@@ -1338,6 +1651,22 @@ fn collapse_fixed(lead: C, mult: &Ast, tail: &Ast) -> C {
         if is_below_omega1(b) {
             w_parts.push(b.clone());
             continue;
+        }
+        let (h, m) = split_head_mult(b);
+        if limit_card_pow {
+            if let Some(Head::Cardinal(s2)) = &h {
+                if is_successor_ord(s2) && !matches!(s2, Ast::Num(1)) && as_nat(s2).map_or(true, |n| n >= 2) {
+                    // Ω_{u+1}·Y tail → ψ_u(lead + preceding + conv(Y))
+                    let mut parts = vec![lead.clone()];
+                    parts.extend(x_c.iter().cloned());
+                    parts.push(conv_ord(&m));
+                    x_c.push(C::Psi(
+                        Some(Box::new(conv_ord(&pred_ord(s2)))),
+                        Box::new(c_sum(parts)),
+                    ));
+                    continue;
+                }
+            }
         }
         let is_psi_block = match b {
             Ast::Psi(..) => true,
@@ -1364,6 +1693,74 @@ fn collapse_fixed(lead: C, mult: &Ast, tail: &Ast) -> C {
 
 /// ψ₀(Ω_λ·k + r) with λ a limit (rows 507-526): like collapse_fixed, but
 /// tails Ω_s·X with s a successor ≥ 2 become ψ_{s-1}(lead + M(X)).
+/// Flatten a power lead: T(Ω_s^e·k) = Ω_s·(e·k) for finite e; T(Ω_s·k) = Ω_s·k.
+/// Used for ψ_s(0)-tails under same-subscript limit leads (rows 869-875, 942).
+fn tail_lead_flat(s: &Ast, lead: &C) -> C {
+    let es = conv_ord(s);
+    match lead {
+        C::Pow(b, e) => match (b.as_ref(), e.as_ref()) {
+            (C::OmegaSub(x), C::Nat(n)) if render(x) == render(&es) => {
+                C::Mul(Box::new(C::OmegaSub(x.clone())), Box::new(C::Nat(*n)))
+            }
+            _ => lead.clone(),
+        },
+        C::Mul(a, b) => {
+            let fa = tail_lead_flat(s, a);
+            c_mul(fa, (**b).clone())
+        }
+        _ => lead.clone(),
+    }
+}
+
+/// F(β) for a ψ_s-tail argument β ≥ Ω_s under lead L (rows 877, 945, 960):
+/// β = Ω_s^e·m (e ≥ 2) stays ψ_s(β); β = Ω_s·j + n folds as
+/// ψ_s(L+1) (n = 1) or ψ_{s+1}(L+n−1) (n ≥ 2).
+fn fold_tail_arg(s: &Ast, lead: &C, x: &Ast) -> C {
+    let mut bs = Vec::new();
+    flatten_add(x, &mut bs);
+    if bs.is_empty() {
+        return conv_ord(x);
+    }
+    let (h0, _) = split_head_mult(&bs[0]);
+    let lead_pow = matches!(&h0, Some(Head::CardinalPow(t, e)) if ast_eq(t, s) && as_nat(e).map_or(false, |n| n >= 2));
+    if lead_pow {
+        return C::Psi(Some(Box::new(conv_ord(s))), Box::new(conv_ord(x)));
+    }
+    if !matches!(&h0, Some(Head::Cardinal(t)) if ast_eq(t, s)) {
+        return conv_ord(x);
+    }
+    let mut idx = 1usize;
+    while idx < bs.len() {
+        let (h2, _) = split_head_mult(&bs[idx]);
+        if matches!(&h2, Some(Head::Cardinal(t)) if ast_eq(t, s)) {
+            idx += 1;
+        } else {
+            break;
+        }
+    }
+    let smalls = &bs[idx..];
+    let mut total = 0i32;
+    let mut all_nat = true;
+    for b in smalls {
+        if let Ast::Num(n) = b { total += n; } else { all_nat = false; break; }
+    }
+    if !all_nat || total == 0 {
+        return C::Psi(Some(Box::new(conv_ord(s))), Box::new(conv_ord(x)));
+    }
+    if total == 1 {
+        C::Psi(
+            Some(Box::new(conv_ord(s))),
+            Box::new(c_sum(vec![lead.clone(), C::Nat(1)])),
+        )
+    } else {
+        let s1 = Ast::Add(Box::new(s.clone()), Box::new(Ast::Num(1)));
+        C::Psi(
+            Some(Box::new(conv_ord(&s1))),
+            Box::new(c_sum(vec![lead.clone(), c_nat(total - 1)])),
+        )
+    }
+}
+
 fn collapse_fixed_cardinal(s: &Ast, mult: &Ast, tail: &Ast) -> C {
     let leadc = C::OmegaSub(Box::new(conv_ord(s)));
     let lead = c_mul(leadc.clone(), conv_ord(mult));
@@ -1371,23 +1768,105 @@ fn collapse_fixed_cardinal(s: &Ast, mult: &Ast, tail: &Ast) -> C {
     flatten_add(tail, &mut blocks);
     let mut x_c: Vec<C> = Vec::new();
     let mut w_parts: Vec<Ast> = Vec::new();
-    for b in &blocks {
+    let mut i = 0usize;
+    while i < blocks.len() {
+        let b = &blocks[i];
         if is_below_omega1(b) {
             w_parts.push(b.clone());
+            i += 1;
+            continue;
+        }
+        // ψ_s(x) tail (same subscript as the limit lead):
+        // → ψ_s(T(lead))·ω^x when x < Ω_s; ψ_s(lead + F(x)) otherwise.
+        let psi_tail = match b {
+            Ast::Psi(Some(u), x) if ast_eq(u, s) => Some(((**x).clone(), None)),
+            Ast::Pow(p, e) => match p.as_ref() {
+                Ast::Psi(Some(u), x) if ast_eq(u, s) => Some(((**x).clone(), Some((**e).clone()))),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some((x, epow)) = psi_tail {
+            let flat = tail_lead_flat(s, &lead);
+            let base = C::Psi(Some(Box::new(conv_ord(s))), Box::new(flat));
+            let base = match epow {
+                Some(e) => C::Pow(Box::new(base), Box::new(conv_ord(&e))),
+                None => base,
+            };
+            let contrib = if below_omega_idx(s, &x) {
+                if is_zero_ast(&x) {
+                    base
+                } else {
+                    c_mul(base, normalize_omegapow(conv_ord(&x)))
+                }
+            } else {
+                let f = fold_tail_arg(s, &lead, &x);
+                C::Psi(
+                    Some(Box::new(conv_ord(s))),
+                    Box::new(c_sum(vec![lead.clone(), f])),
+                )
+            };
+            x_c.push(contrib);
+            i += 1;
             continue;
         }
         let (h, m) = split_head_mult(b);
+        // Ω_s·j tail with small rest: folds into ψ_s (rows 876, 885).
+        if matches!(&h, Some(Head::Cardinal(t)) if ast_eq(t, s)) {
+            let mut j = i + 1;
+            while j < blocks.len() {
+                let (hj, _) = split_head_mult(&blocks[j]);
+                if matches!(&hj, Some(Head::Cardinal(t)) if ast_eq(t, s)) {
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            let mut smalls: Vec<Ast> = Vec::new();
+            let mut k = j;
+            while k < blocks.len() && is_below_omega1(&blocks[k]) {
+                smalls.push(blocks[k].clone());
+                k += 1;
+            }
+            let mut total = 0i32;
+            let mut all_nat = true;
+            for sb in &smalls {
+                if let Ast::Num(n) = sb { total += n; } else { all_nat = false; break; }
+            }
+            let (contrib, consumed) = if all_nat && total == 1 {
+                (C::Psi(
+                    Some(Box::new(conv_ord(s))),
+                    Box::new(c_sum(vec![lead.clone(), C::Nat(1)])),
+                ), true)
+            } else if all_nat && total >= 2 {
+                let s1 = Ast::Add(Box::new(s.clone()), Box::new(Ast::Num(1)));
+                (C::Psi(
+                    Some(Box::new(conv_ord(&s1))),
+                    Box::new(c_sum(vec![lead.clone(), c_nat(total - 1)])),
+                ), true)
+            } else {
+                (conv_ord(&translate_down(b)), false)
+            };
+            x_c.push(contrib);
+            i = if consumed { k } else { i + 1 };
+            continue;
+        }
         match &h {
-            Some(Head::Cardinal(s2)) if is_successor_ord(s2) && as_nat(s2).map_or(false, |n| n >= 2) => {
+            Some(Head::Cardinal(s2)) if is_successor_ord(s2) && !matches!(s2, Ast::Num(1)) && as_nat(s2).map_or(true, |n| n >= 2) => {
+                // Ω_{u+1}·Y tail → ψ_u(lead + preceding + conv(Y))
+                let mut parts = vec![lead.clone()];
+                parts.extend(x_c.iter().cloned());
+                parts.push(conv_ord(&m));
                 x_c.push(C::Psi(
                     Some(Box::new(conv_ord(&pred_ord(s2)))),
-                    Box::new(c_sum(vec![leadc.clone(), conv_ord(&m)])),
+                    Box::new(c_sum(parts)),
                 ));
             }
             _ => {
                 x_c.push(conv_ord(&translate_down(b)));
             }
         }
+        i += 1;
     }
     let arg = if x_c.is_empty() {
         lead
@@ -1696,7 +2175,9 @@ fn split_block_coeff(t: &C) -> Option<(C, C)> {
                 x if is_psi_base(x) => Some(((**a).clone(), (**b).clone())),
                 C::Pow(p, e) => pow_split(p, e)
                     .map(|(base, coeff)| (base, c_mul(coeff, (**b).clone()))),
-                _ => None,
+                // Nested products: (ψ·c₁)·c₂ = ψ·(c₁·c₂) (left absorption).
+                _ => split_block_coeff(a)
+                    .map(|(base, coeff)| (base, c_mul(coeff, (**b).clone()))),
             }
         }
         C::Pow(p, e) => pow_split(p, e),
@@ -1720,8 +2201,17 @@ fn merge_arg_blocks(c: C) -> C {
                     if let Some(last) = out.last_mut() {
                         if let Some((lbase, lcoeff)) = split_block_coeff(last) {
                             if render(&lbase) == render(&base) {
-                                *last = rebuild_coeff(lbase, c_add_ord(lcoeff, coeff));
-                                merged = true;
+                                let mc = match (&lcoeff, &coeff) {
+                                    (C::Nat(1), big) if !is_below_c(big) => big.clone(),
+                                    _ => c_add_ord(lcoeff, coeff),
+                                };
+                                // A Sum coefficient would render without
+                                // parentheses inside the product; keep the
+                                // summands separate instead.
+                                if !matches!(mc, C::Sum(_)) {
+                                    *last = rebuild_coeff(lbase, mc);
+                                    merged = true;
+                                }
                             }
                         }
                     }
@@ -1740,7 +2230,25 @@ fn normalize(c: C) -> C {
         C::Mul(a, b) => {
             let na = normalize(*a);
             let nb = normalize(*b);
-            merge_product(na, nb)
+            let prod = merge_product(na, nb);
+            // ψ_v(x)·β with β ≥ Ω_{v+1}: absorb β into the argument.
+            let mut fs = Vec::new();
+            flatten_product(&prod, &mut fs);
+            if fs.len() > 1 {
+                if let Some(C::Psi(Some(v), x)) = fs.first() {
+                    let mut acc = C::One;
+                    for f in fs[1..].iter() {
+                        acc = merge_product(acc, f.clone());
+                    }
+                    if big_factor(&acc, v) {
+                        return C::Psi(
+                            Some(v.clone()),
+                            Box::new(normalize(c_sum(vec![(**x).clone(), acc]))),
+                        );
+                    }
+                }
+            }
+            prod
         }
         C::OmegaSub(a) => {
             let na = normalize(*a);
@@ -1906,6 +2414,27 @@ pub fn mocf_normalize(c: &C) -> C {
     cur
 }
 
+/// True if a subscript value s is strictly above v (v a natural).
+fn level_gt(v: &C, s: &C) -> bool {
+    match (v, s) {
+        (C::Nat(a), C::Nat(b)) => b > a,
+        (C::Nat(_), _) => true,
+        _ => false,
+    }
+}
+
+/// True if beta >= Ω_{v+1} (conservatively, by its leading factor), which
+/// lets ψ_v(x)·beta absorb into the ψ_v-argument.
+fn big_factor(beta: &C, v: &C) -> bool {
+    match beta {
+        C::OmegaSub(s) => level_gt(v, s),
+        C::Psi(Some(u), _) => level_gt(v, u),
+        C::Mul(a, _) => big_factor(a, v),
+        C::Pow(b, _) => big_factor(b, v),
+        _ => false,
+    }
+}
+
 fn mocf_normalize_once(c: &C) -> C {
     match c {
         C::OmegaPow(e) => {
@@ -1923,16 +2452,66 @@ fn mocf_normalize_once(c: &C) -> C {
             let mut fs = Vec::new();
             flatten_product(&na, &mut fs);
             flatten_product(&nb, &mut fs);
+            // ψ_v(x)·β with β ≥ Ω_{v+1}: absorb β into the argument
+            // (ψ_1(ψ_ω(Ω))·ψ_ω(Ω) → ψ_1(ψ_ω(Ω)+ψ_ω(Ω))).
+            if let Some(C::Psi(Some(v), x)) = fs.first() {
+                if fs.len() > 1 {
+                    let rest: Vec<C> = fs[1..].to_vec();
+                    let mut acc = C::One;
+                    for f in rest { acc = merge_product(acc, f); }
+                    if big_factor(&acc, v) {
+                        return C::Psi(
+                            Some(v.clone()),
+                            Box::new(c_sum(vec![(**x).clone(), acc])),
+                        );
+                    }
+                }
+            }
             normalize_product(fs)
         }
         C::Sum(terms) => {
             let mut out: Vec<C> = Vec::new();
             for t in terms {
                 let nt = mocf_normalize_once(t);
+                // a + a·β → a·β when β is infinite (a absorbs).
+                if let Some(prev) = out.last() {
+                    let (lead_r, infinite) = match &nt {
+                        C::Mul(x, k) => (render(x), !matches!(k.as_ref(), C::Nat(_))),
+                        C::Pow(x, k) => (render(x), !matches!(k.as_ref(), C::Nat(_))),
+                        _ => (String::new(), false),
+                    };
+                    if infinite && !lead_r.is_empty() && render(prev) == lead_r {
+                        out.pop();
+                    }
+                }
                 absorb_small_before(&mut out, &nt);
                 out.push(nt);
             }
-            c_sum(out)
+            // Merge consecutive equal terms: x + x → x·2.
+            let mut merged: Vec<C> = Vec::new();
+            for t in out {
+                let r = render(&t);
+                if let Some(last) = merged.last() {
+                    let (base_r, cnt) = match last {
+                        C::Mul(x, k) => match k.as_ref() {
+                            C::Nat(n) => (render(x), *n),
+                            _ => (String::new(), 0),
+                        },
+                        other => (render(other), 1),
+                    };
+                    if cnt > 0 && base_r == r {
+                        let base = match last {
+                            C::Mul(x, _) => (**x).clone(),
+                            other => other.clone(),
+                        };
+                        let n = merged.len();
+                        merged[n - 1] = C::Mul(Box::new(base), Box::new(c_nat(cnt + 1)));
+                        continue;
+                    }
+                }
+                merged.push(t);
+            }
+            c_sum(merged)
         }
         C::Psi(v, a) => C::Psi(
             v.as_ref().map(|x| Box::new(mocf_normalize_once(x))),
@@ -2585,11 +3164,51 @@ mod tests {
         );
         // Ω < Ω_{v+1} peels as ×ω^Ω = ×Ω.
         assert_eq!(conv("ψ_1(Ω_2^ω+Ω)"), "\\psi_{1}(\\Omega_{2}^{\\omega})\\Omega");
-        // Ω_{v+1}-built tails under a limit-exponent lead translate down
-        // into a ψ₀-argument.
-        assert_eq!(conv("ψ_1(Ω_2^ω+Ω_2)"), "\\psi(\\Omega_{2}^{\\omega} + 1)");
-        assert_eq!(conv("ψ_1(Ω_2^ω+Ω_2×2)"), "\\psi(\\Omega_{2}^{\\omega} + 2)");
-        assert_eq!(conv("ψ_1(Ω_2^ω+Ω_2^2)"), "\\psi(\\Omega_{2}^{\\omega} + \\Omega_{2})");
+        // Under a limit lead in ψ_v (v ≥ 1), a tail cardinal above the
+        // collapse cardinal stays whole in the argument (Ω_ω > Ω_2 cannot
+        // be pulled out of ψ_1); Ω_{v+1} folds, its powers translate down.
+        assert_eq!(conv("ψ_1(Ω_ω×Ω+Ω_ω)"), "\\psi_{1}(\\Omega_{\\omega}\\Omega + \\Omega_{\\omega})");
+        assert_eq!(conv("ψ_1(Ω_ω×Ω+Ω_2)"), "\\psi_{1}(\\Omega_{\\omega}\\Omega + 1)");
+        assert_eq!(conv("ψ_1(Ω_ω×Ω+Ω_2^2)"), "\\psi_{1}(\\Omega_{\\omega}\\Omega + \\Omega_{2})");
+        // Ω_s-built tails under a limit-exponent lead translate down,
+        // keeping the ψ_v subscript (corrected data rows 1243-1245).
+        assert_eq!(conv("ψ_1(Ω_2^ω+Ω_2)"), "\\psi_{1}(\\Omega_{2}^{\\omega} + 1)");
+        assert_eq!(conv("ψ_1(Ω_2^ω+Ω_2×2)"), "\\psi_{1}(\\Omega_{2}^{\\omega} + 2)");
+        assert_eq!(conv("ψ_1(Ω_2^ω+Ω_2^2)"), "\\psi_{1}(\\Omega_{2}^{\\omega} + \\Omega_{2})");
+        // Finite-exponent lowering also applies above the collapse cardinal.
+        assert_eq!(conv("ψ_1(Ω_3^2+Ω_3)"), "\\psi_{1}(\\Omega_{3} + 1)");
+        assert_eq!(conv("ψ_1(Ω_(ω+1)^2+Ω_(ω+1))"), "\\psi_{1}(\\Omega_{\\omega + 1} + 1)");
+        // Finite-exponent lowering at ψ_v level (source rows 1084-1094).
+        assert_eq!(conv("ψ_1(Ω_2^2+Ω_2)"), "\\psi_{1}(\\Omega_{2} + 1)");
+        assert_eq!(conv("ψ_1(Ω_2^2×2)"), "\\psi_{1}(\\Omega_{2}2)");
+        assert_eq!(
+            conv("ψ_1(Ω_2^2+Ω_2×ψ_1(Ω_2^2))"),
+            "\\psi_{1}(\\Omega_{2} + \\psi_{1}(\\Omega_{2}))"
+        );
+        // Ω_s·k lead: contiguous Ω_s tails merge into the multiplier.
+        assert_eq!(
+            conv("ψ_1(Ω_2×ψ_1(Ω_2)+Ω_2)"),
+            "\\psi_{1}(\\psi_{1}(0) + 1)"
+        );
+        // Limit-subscript leads: Ω_{u+1}·Y tails fold as ψ_u(lead+preceding+Y),
+        // Ω_{u+1}·ψ_u(X) becomes ψ_u(X′+ψ_u(X′)) (source rows 1095-1109).
+        assert_eq!(
+            conv("ψ(Ω_ω×Ω+Ω_2)"),
+            "\\psi(\\Omega_{\\omega}\\Omega + \\psi_{1}(\\Omega_{\\omega}\\Omega + 1))"
+        );
+        assert_eq!(
+            conv("ψ(Ω_ω×Ω_2+Ω_2×ψ_1(Ω_ω))"),
+            "\\psi(\\Omega_{\\omega}\\Omega_{2} + \\psi_{1}(\\Omega_{\\omega}\\Omega_{2} + \\psi_{1}(\\Omega_{\\omega})))"
+        );
+        assert_eq!(
+            conv("ψ(Ω_ω^2+Ω_2×ψ_1(Ω_ω^2))"),
+            "\\psi(\\Omega_{\\omega}^{2} + \\psi_{1}(\\Omega_{\\omega}^{2} + \\psi_{1}(\\Omega_{\\omega}^{2})))"
+        );
+        // True-limit subscript powers keep their exponent under translate_down.
+        assert_eq!(
+            conv("ψ(Ω_(ω+1)+Ω_ω^2)"),
+            "\\psi(\\psi_{\\omega}(0) + \\Omega_{\\omega}^{2})"
+        );
     }
 
     #[test]
@@ -2607,6 +3226,452 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn norm_mocf_latex(s: &str) -> String {
+    // Replace product markers with spaces so token boundaries stay visible,
+    // canonicalize Ω^e_s (source convention) to Ω_s^e, then strip
+    // braces/whitespace.
+    let t = s.replace("\\times", " ").replace("\\cdot", " ");
+    let chars: Vec<char> = t.chars().collect();
+    let n = chars.len();
+    fn scan_token(chars: &[char], mut j: usize) -> usize {
+        if j < chars.len() && chars[j] == '(' {
+            let mut depth = 1;
+            j += 1;
+            while j < chars.len() && depth > 0 {
+                if chars[j] == '(' { depth += 1; }
+                if chars[j] == ')' { depth -= 1; }
+                j += 1;
+            }
+            return j;
+        }
+        if j < chars.len() && chars[j] == '\\' {
+            j += 1;
+            while j < chars.len() && chars[j].is_ascii_alphabetic() { j += 1; }
+            return j;
+        }
+        while j < chars.len() && chars[j].is_ascii_alphanumeric() { j += 1; }
+        j
+    }
+    let mut out = String::new();
+    let mut i = 0;
+    while i < n {
+        if t[i..].starts_with("\\Omega^") {
+            let j0 = i + "\\Omega^".len();
+            let j1 = scan_token(&chars, j0);
+            if j1 < n && chars[j1] == '_' {
+                let k0 = j1 + 1;
+                let k1 = scan_token(&chars, k0);
+                out.push_str("\\Omega_");
+                out.push_str(&t[k0..k1]);
+                out.push('^');
+                out.push_str(&t[j0..j1]);
+                i = k1;
+                continue;
+            }
+            out.push_str(&t[i..j1]);
+            i = j1;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out.chars().filter(|c| !matches!(c, '{' | '}' | ' ' | '\t')).collect()
+}
+#[cfg(test)]
+mod datagen {
+    use super::norm_mocf_latex;
+    use crate::bms::bms_to_bocf;
+
+    fn split_csv(line: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cur = String::new();
+        let mut in_q = false;
+        for c in line.chars() {
+            if c == '"' { in_q = !in_q; }
+            else if c == ',' && !in_q { out.push(cur.clone()); cur.clear(); }
+            else { cur.push(c); }
+        }
+        out.push(cur);
+        out
+    }
+
+    fn parse_matrix(s: &str) -> Vec<Vec<i32>> {
+        let mut m = Vec::new();
+        for part in s.split(')') {
+            let p = part.trim_start_matches('(').trim();
+            if p.is_empty() { continue; }
+            let row: Vec<i32> = p.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            if !row.is_empty() { m.push(row); }
+        }
+        m
+    }
+
+    pub(crate) fn latex_to_unicode(s: &str) -> String {
+        insert_mul(&latex_symbols(s))
+    }
+
+    fn latex_symbols(s: &str) -> String {
+        let mut r = String::new();
+        let chars: Vec<char> = s.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '\\' {
+                let mut j = i + 1;
+                while j < chars.len() && chars[j].is_ascii_alphabetic() { j += 1; }
+                let cmd: String = chars[i + 1..j].iter().collect();
+                match cmd.as_str() {
+                    "psi" => r.push('ψ'),
+                    "Omega" => r.push('Ω'),
+                    "omega" => r.push('ω'),
+                    "left" | "right" => {}
+                    _ => r.push_str(&cmd),
+                }
+                i = j;
+            } else {
+                r.push(chars[i]);
+                i += 1;
+            }
+        }
+        r
+    }
+
+    /// Insert × for the renderer's implicit-multiplication juxtaposition.
+    fn insert_mul(s: &str) -> String {
+        let chars: Vec<char> = s.chars().collect();
+        let n = chars.len();
+        let starts_factor = |c: char| {
+            c == 'ψ' || c == 'Ω' || c == 'ω' || c == '(' || c.is_ascii_digit()
+        };
+        let mut out = String::new();
+        let mut i = 0;
+        while i < n {
+            let c = chars[i];
+            if starts_factor(c) {
+                if c == 'ψ' {
+                    out.push(c);
+                    i += 1;
+                    // Optional subscript before the argument list.
+                    if i < n && chars[i] == '_' {
+                        out.push('_');
+                        i += 1;
+                        if i < n && chars[i] == '{' {
+                            let start = i;
+                            let mut depth = 1;
+                            i += 1;
+                            while i < n && depth > 0 {
+                                if chars[i] == '{' { depth += 1; }
+                                if chars[i] == '}' { depth -= 1; }
+                                i += 1;
+                            }
+                            let inner: String = chars[start + 1..i - 1].iter().collect();
+                            out.push('(');
+                            out.push_str(&insert_mul(&inner));
+                            out.push(')');
+                        } else if i < n {
+                            out.push(chars[i]);
+                            i += 1;
+                        }
+                    }
+                    if i >= n || chars[i] != '(' {
+                        if i < n && starts_factor(chars[i]) { out.push('×'); }
+                        continue;
+                    }
+                    let start = i;
+                    let mut depth = 1;
+                    i += 1;
+                    while i < n && depth > 0 {
+                        if chars[i] == '(' { depth += 1; }
+                        if chars[i] == ')' { depth -= 1; }
+                        i += 1;
+                    }
+                    let inner: String = chars[start + 1..i - 1].iter().collect();
+                    out.push('(');
+                    out.push_str(&insert_mul(&inner));
+                    out.push(')');
+                } else if c == '(' {
+                    let start = i;
+                    let mut depth = 1;
+                    i += 1;
+                    while i < n && depth > 0 {
+                        if chars[i] == '(' { depth += 1; }
+                        if chars[i] == ')' { depth -= 1; }
+                        i += 1;
+                    }
+                    let inner: String = chars[start + 1..i - 1].iter().collect();
+                    out.push('(');
+                    out.push_str(&insert_mul(&inner));
+                    out.push(')');
+                } else if c.is_ascii_digit() {
+                    while i < n && chars[i].is_ascii_digit() {
+                        out.push(chars[i]);
+                        i += 1;
+                    }
+                } else {
+                    out.push(c);
+                    i += 1;
+                }
+                // Consume attached _ / ^ chains.  Subscripts use the
+                // parser's _(…) form with juxtaposition (no ×); exponents
+                // keep braces and get × inserted.
+                while i < n && (chars[i] == '_' || chars[i] == '^') {
+                    let marker = chars[i];
+                    out.push(marker);
+                    i += 1;
+                    if i < n && chars[i] == '{' {
+                        let start = i;
+                        let mut depth = 1;
+                        i += 1;
+                        while i < n && depth > 0 {
+                            if chars[i] == '{' { depth += 1; }
+                            if chars[i] == '}' { depth -= 1; }
+                            i += 1;
+                        }
+                        let inner: String = chars[start + 1..i - 1].iter().collect();
+                        if marker == '_' {
+                            out.push('(');
+                            out.push_str(&insert_mul(&inner));
+                            out.push(')');
+                        } else {
+                            out.push('{');
+                            out.push_str(&insert_mul(&inner));
+                            out.push('}');
+                        }
+                    } else if i < n {
+                        out.push(chars[i]);
+                        i += 1;
+                    }
+                }
+                if i < n && starts_factor(chars[i]) {
+                    out.push('×');
+                }
+            } else {
+                out.push(c);
+                i += 1;
+            }
+        }
+        out
+    }
+
+
+
+    #[test]
+    fn generate_from_bms_source() {
+        let root = "/data/data/com.termux/files/home/bms-analyzer-enhanced-main/";
+        let Ok(content) = std::fs::read_to_string(format!("{}bms vs mocf.txt", root)) else {
+            println!("== DATAGEN: source file absent, skipped ==");
+            return;
+        };
+        let mut all_rows: Vec<(String, String)> = Vec::new();
+        let mut matches: Vec<(String, String)> = Vec::new();
+        let mut mismatches: Vec<(String, String, String)> = Vec::new();
+        let mut errors: Vec<(String, String)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if !line.starts_with("(0,") || line.contains("\\dots") { continue; }
+            let parts: Vec<&str> = line.split('=').collect();
+            if parts.len() < 2 { continue; }
+            let bms = parts[0].trim();
+            let mocf_src = parts[parts.len() - 1].trim();
+            if !seen.insert(bms.to_string()) { continue; }
+            let m = parse_matrix(bms);
+            let term = bms_to_bocf(&m);
+            let raw = crate::term::term_to_string(false, &term);
+            let bocf = latex_to_unicode(&raw);
+            all_rows.push((bocf.clone(), mocf_src.to_string()));
+            match super::bocf_to_mocf(&bocf) {
+                Err(e) => errors.push((bocf.clone(), format!("{} :: {} :: {}", bms, raw, e))),
+                Ok(got) => {
+                    if norm_mocf_latex(&got) == norm_mocf_latex(mocf_src) {
+                        matches.push((bocf, got));
+                    } else {
+                        mismatches.push((bocf, got, mocf_src.to_string()));
+                    }
+                }
+            }
+        }
+        let mut out = String::from("\"\"Buchholz's OCF\",\"Madore's OCF (source)\",\"Madore's OCF (ours)\",\"status\"\"\n");
+        for (b, s) in &all_rows {
+            let mut status = String::from("(generated)");
+            let mut ours = String::from("-");
+            for (mb, mg) in &matches {
+                if mb == b { ours = mg.clone(); status.push_str(" match"); break; }
+            }
+            if ours == "-" {
+                for (mb2, mg2, _) in &mismatches {
+                    if mb2 == b { ours = mg2.clone(); status.push_str(" MISMATCH"); break; }
+                }
+            }
+            if ours == "-" {
+                for (eb, ee) in &errors {
+                    if eb == b { ours = ee.clone(); status.push_str(" ERROR"); break; }
+                }
+            }
+            out.push_str(&format!("\"{}\",\"{}\",\"{}\",\"{}\"\n", b, s, ours, status));
+        }
+        std::fs::write(format!("{}bocf vs mocf generated2.csv", root), &out).unwrap();
+        println!("== MATCHES: {} ==", matches.len());
+        println!("== MISMATCHES: {} ==", mismatches.len());
+        for (b, g, s) in mismatches.iter().take(10) {
+            println!("  bocf {}\n    ours   {}\n    source {}", b, g, s);
+        }
+        println!("== ERRORS: {} ==", errors.len());
+        for (b, e) in errors.iter().take(10) { println!("  {} → {}", b, e); }
+    }
+}
+
+#[cfg(test)]
+mod conflict_scan {
+    use super::datagen::latex_to_unicode;
+    use super::norm_mocf_latex;
+
+    fn split_csv(line: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cur = String::new();
+        let mut in_q = false;
+        for c in line.chars() {
+            if c == '"' { in_q = !in_q; }
+            else if c == ',' && !in_q { out.push(cur.clone()); cur.clear(); }
+            else { cur.push(c); }
+        }
+        out.push(cur);
+        out
+    }
+
+    #[test]
+    fn scan_conflicts() {
+        let root = "/data/data/com.termux/files/home/bms-analyzer-enhanced-main/";
+        let content = std::fs::read_to_string(format!("{}bocf vs mocf.csv", root)).unwrap();
+        let mut map: std::collections::HashMap<String, Vec<(usize, String, String)>> =
+            std::collections::HashMap::new();
+        let mut parse_errs = 0usize;
+        for (idx, line) in content.lines().enumerate() {
+            if idx == 0 || line.trim().is_empty() { continue; }
+            let fields = split_csv(line);
+            if fields.len() < 2 { continue; }
+            let input = fields[0].replace("\\cdot", "*").replace("\\times", "*");
+            let key = match crate::parser::parse_bocf(&input) {
+                Ok(ast) => match crate::parser::eval_ast(&ast) {
+                    Ok(t) => crate::term::term_to_string(false, &crate::term::standard_form(&t)),
+                    Err(e) => { parse_errs += 1; if parse_errs <= 16 { println!("EVAL FAIL: {} :: {}", input, e); } format!("ERR_EVAL {}", input) }
+                },
+                Err(e) => { parse_errs += 1; if parse_errs <= 8 { println!("PARSE FAIL: {} :: {}", input, e); } format!("ERR_PARSE {}", input) }
+            };
+            map.entry(key).or_default().push((idx + 1, fields[0].clone(), fields[1].clone()));
+        }
+        let mut conflicts = 0usize;
+        let mut dup_groups = 0usize;
+        let mut keys: Vec<&String> = map.keys().collect();
+        keys.sort();
+        for k in keys {
+            let v = &map[k];
+            if v.len() < 2 { continue; }
+            dup_groups += 1;
+            let first = norm_mocf_latex(&v[0].2);
+            let clash = v.iter().any(|(_, _, m)| norm_mocf_latex(m) != first);
+            if clash {
+                conflicts += 1;
+                println!("== CONFLICT (key {}) ==", k);
+            }
+            println!("== DUP GROUP ({} rows) ==", v.len());
+            for (r, b, m) in v {
+                println!("  row {}: input  {}
+         expect {}", r, b, m);
+            }
+        }
+        println!("== SCAN: total groups with same ordinal: {}, true conflicts: {}, parse errors: {} ==",
+            dup_groups, conflicts, parse_errs);
+    }
+}
+
+/// Deduplicate "bocf vs mocf.csv" by ordinal value (term standard form)
+/// and sort by the parsed term. Run with:
+///   cargo test --release -p bms-core dedup_sort -- --ignored --nocapture
+#[cfg(test)]
+mod dedup_sort {
+    fn split_csv(line: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cur = String::new();
+        let mut in_q = false;
+        for c in line.chars() {
+            if c == '"' { in_q = !in_q; }
+            else if c == ',' && !in_q { out.push(cur.clone()); cur.clear(); }
+            else { cur.push(c); }
+        }
+        out.push(cur);
+        out
+    }
+
+    #[test]
+    #[ignore]
+    fn dedup_and_sort() {
+        use crate::term as tm;
+        let root = "/data/data/com.termux/files/home/bms-analyzer-enhanced-main/";
+        let content = std::fs::read_to_string(format!("{}bocf vs mocf.csv", root)).unwrap();
+        let mut header = String::new();
+        // (term, original line); unparseable rows go to the end.
+        let mut rows: Vec<(Option<crate::term::Term>, String)> = Vec::new();
+        let mut unparseable: Vec<String> = Vec::new();
+        for (idx, line) in content.lines().enumerate() {
+            if idx == 0 { header = line.to_string(); continue; }
+            if line.trim().is_empty() { continue; }
+            let fields = split_csv(line);
+            if fields.len() < 2 { continue; }
+            let input = fields[0].replace("\\cdot", "*").replace("\\times", "*");
+            let term = crate::parser::parse_bocf(&input)
+                .ok()
+                .and_then(|ast| crate::parser::eval_ast(&ast).ok())
+                .map(|t| tm::standard_form(&t));
+            match term {
+                Some(t) => rows.push((Some(t), line.to_string())),
+                None => unparseable.push(line.to_string()),
+            }
+        }
+        let total = rows.len() + unparseable.len();
+        // Deduplicate by canonical term string, keeping the first row.
+        let mut seen = std::collections::HashSet::new();
+        let mut kept: Vec<(crate::term::Term, String)> = Vec::new();
+        let mut removed = 0usize;
+        for (t, line) in rows {
+            let t = t.unwrap();
+            let key = tm::term_to_string(false, &t);
+            if seen.insert(key) {
+                kept.push((t, line));
+            } else {
+                removed += 1;
+            }
+        }
+        kept.sort_by(|a, b| {
+            if tm::lt(&a.0, &b.0) {
+                std::cmp::Ordering::Less
+            } else if tm::lt(&b.0, &a.0) {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        });
+        let mut out = header.clone();
+        out.push('\n');
+        for (_, line) in &kept {
+            out.push_str(line);
+            out.push('\n');
+        }
+        for line in &unparseable {
+            out.push_str(line);
+            out.push('\n');
+        }
+        std::fs::write(format!("{}bocf vs mocf sorted.csv", root), &out).unwrap();
+        println!("== DEDUP: total {}, kept {}, removed {}, unparseable {} -> bocf vs mocf sorted.csv ==",
+            total, kept.len(), removed, unparseable.len());
+        for line in unparseable.iter().take(10) {
+            println!("  UNPARSEABLE: {}", line);
+        }
+    }
+}
+
+
+
 // Scratch harness to audit CSV coverage.
 #[cfg(test)]
 mod csv_audit {
@@ -2614,12 +3679,13 @@ mod csv_audit {
 
     #[test]
     fn audit_all_rows() {
-        let content = std::fs::read_to_string("/data/data/com.termux/files/home/bms-analyzer-enhanced-main/bocf vs mocf.csv")
+        let content = std::fs::read_to_string("../../../bocf vs mocf.csv")
             .expect("csv not found");
         let mut errors: Vec<String> = Vec::new();
         let mut mismatches: Vec<(usize, String, String)> = Vec::new();
         let mut nonstandard: Vec<(usize, String, String)> = Vec::new();
         let mut structural: Vec<(usize, String, String)> = Vec::new();
+        let mut inputs: Vec<String> = Vec::new();
         for (idx, line) in content.lines().enumerate() {
             if idx == 0 || line.trim().is_empty() { continue; }
             // parse two quoted CSV fields
@@ -2627,6 +3693,8 @@ mod csv_audit {
             if fields.len() < 2 { continue; }
             let input = fields[0].replace("\\cdot", "*");
             let expected = fields[1].clone();
+            if inputs.len() <= idx + 1 { inputs.resize(idx + 2, String::new()); }
+            inputs[idx + 1] = fields[0].clone();
             if let Ok(ast) = crate::parser::parse_bocf(&input) {
                 if let Ok(t) = crate::parser::eval_ast(&ast) {
                     let sf = crate::term::standard_form(&t);
@@ -2642,11 +3710,9 @@ mod csv_audit {
             match bocf_to_mocf(&input) {
                 Err(e) => errors.push(format!("row {}: {} → ERR: {}", idx + 1, fields[0], e)),
                 Ok(got) => {
-                    let norm = |s: String| s.replace("\\cdot", "").chars().filter(|c| !matches!(c, '{' | '}' | ' ' | '\t')).collect::<String>();
-                    let got_n = norm(got);
-                    let exp_n = norm(expected);
-                    if got_n != exp_n {
-                        mismatches.push((idx + 1, got_n, exp_n));
+                    let norm = |s: &str| super::norm_mocf_latex(s);
+                    if norm(&got) != norm(&expected) {
+                        mismatches.push((idx + 1, got, expected.clone()));
                     }
                 }
             }
@@ -2667,10 +3733,60 @@ mod csv_audit {
         for (r, g, e) in &mismatches {
             println!("row {}:\n   got  {}\n   want {}", r, g, e);
         }
+        // Write the full mismatch log (with inputs) to mismatch.txt.
+        // GOT/WANT keep their original LaTeX (braces preserved); a
+        // human-readable unicode rendering is added for each.
+        {
+            let mut log = String::new();
+            log.push_str(&format!("MISMATCHES: {}\n\n", mismatches.len()));
+            for (r, g, e) in &mismatches {
+                let inp = inputs.get(*r).cloned().unwrap_or_default();
+                log.push_str(&format!(
+                    "row {}\n  IN   {}\n  GOT  {}\n       {}\n  WANT {}\n       {}\n\n",
+                    r, inp, g, latex_preview(g), e, latex_preview(e)
+                ));
+            }
+            let _ = std::fs::write("../../../mismatch.txt", &log);
+        }
         println!("== STRUCTURAL-NORMALIZE CHANGES: {} ==", structural.len());
         for (r, before, after) in &structural {
             println!("row {}:\n   raw {}\n   nf  {}", r, before, after);
         }
+    }
+
+    /// Render LaTeX MOCF as readable unicode (braces → parentheses kept
+    /// only where they carry grouping; \psi/\Omega/\omega substituted).
+    fn latex_preview(s: &str) -> String {
+        let mut out = String::new();
+        let chars: Vec<char> = s.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            if c == '\\' {
+                let mut j = i + 1;
+                while j < chars.len() && chars[j].is_ascii_alphabetic() { j += 1; }
+                let cmd: String = chars[i + 1..j].iter().collect();
+                match cmd.as_str() {
+                    "psi" => out.push('ψ'),
+                    "Omega" => out.push('Ω'),
+                    "omega" => out.push('ω'),
+                    "times" | "cdot" => out.push('×'),
+                    _ => { out.push('\\'); out.push_str(&cmd); }
+                }
+                i = j;
+            } else if c == '{' {
+                // subscript/argument braces: keep grouping visible
+                out.push('(');
+                i += 1;
+            } else if c == '}' {
+                out.push(')');
+                i += 1;
+            } else {
+                out.push(c);
+                i += 1;
+            }
+        }
+        out
     }
 
     fn split_csv(line: &str) -> Vec<String> {
@@ -2690,4 +3806,5 @@ mod csv_audit {
         out
     }
 }
+
 

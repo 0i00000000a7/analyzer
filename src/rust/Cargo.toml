@@ -3,7 +3,7 @@ resolver = "2"
 members = ["core", "cli", "wasm"]
 
 [workspace.package]
-version = "1.5.2"
+version = "1.5.3"
 
 [profile.release]
 opt-level = 3

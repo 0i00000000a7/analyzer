@@ -982,10 +982,12 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
             _ => None,
         };
         if let Some((parg, pm)) = psi_pred {
-            let xc = C::Psi(
-                Some(Box::new(conv_ord(&pred))),
-                Box::new(conv_sym(&card_arg_shift(s, &parg))),
-            );
+            // The ψ_{pred}-argument may itself start with the collapse
+            // cardinal Ω_{pred+1} (e.g. ψ_1(Ω_2) → ψ_1(0)); collapse it.
+            let shifted = card_arg_shift(s, &parg);
+            let xc = collapse_psi_next_cardinal(&pred, &shifted).unwrap_or_else(|| {
+                C::Psi(Some(Box::new(conv_ord(&pred))), Box::new(conv_sym(&shifted)))
+            });
             if matches!(pm, Ast::Num(1)) {
                 x_c.push(xc);
             } else {
@@ -2446,6 +2448,13 @@ mod tests {
         assert_eq!(conv("ψ(Ω_2^2+Ω_2×ψ_1(Ω_2^2))"), "\\psi(\\Omega_{2} + \\psi_{1}(\\Omega_{2} + \\psi_{1}(\\Omega_{2})))");
         // Row 440
         assert_eq!(conv("ψ(Ω_2^2×ψ_1(Ω_2^2))"), "\\psi(\\Omega_{2}\\psi_{1}(\\Omega_{2}))");
+    }
+
+    #[test]
+    fn omega2_tail_collapse_cardinal() {
+        // A ψ_{s-1}(Ω_s) tail collapses its Ω_s lead: ψ_1(Ω_2) → ψ_1(0).
+        assert_eq!(conv("ψ(Ω_2^2+ψ_1(Ω_2))"), "\\psi(\\Omega_{2} + \\psi_{1}(0))");
+        assert_eq!(conv("ψ(Ω_2^3+ψ_1(Ω_2))"), "\\psi(\\Omega_{2}^{2} + \\psi_{1}(0))");
     }
 
     #[test]

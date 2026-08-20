@@ -559,7 +559,7 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                         Ast::Num(n) => Ast::Num(n + 1),
                         other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
                     };
-                    let mut parts: Vec<C> = vec![new_lead];
+                    let mut parts: Vec<C> = vec![new_lead.clone()];
                     for b in &blocks[1..] {
                         let (h2, m2) = split_head_mult(b);
                         let is_s = match &h2 {
@@ -578,19 +578,37 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                             parts.push(conv_ord(&m2));
                             continue;
                         }
-                        if !is_s {
-                            return None;
-                        }
-                        let tc = match b {
-                            Ast::Omega(Some(_)) => C::Nat(1),
-                            Ast::Mul(p, k)
-                                if matches!(p.as_ref(), Ast::Omega(Some(_))) =>
-                            {
-                                conv_ord(k)
-                            }
-                            _ => conv_ord(&translate_down(b)),
+                        // Ω_{s'}·X tail (s' > v+1) → ψ_{s'-1}(lead + M(X));
+                        // a ψ_{s'-1} factor X fully collapses. For s'=s this
+                        // is ψ_0's Ω_s·X rule; for s'≠s (e.g. ψ_1(Ω_4^2+Ω_3))
+                        // the lowered lead Ω_s is used.
+                        let s_tail = match &h2 {
+                            Some(Head::Cardinal(t)) => Some((*t).clone()),
+                            Some(Head::CardinalPow(t, _)) => Some((*t).clone()),
+                            _ => None,
                         };
-                        parts.push(tc);
+                        if let Some(t) = s_tail {
+                            if is_successor_ord(&t) && sub_ord_lt(&vp1, &t) {
+                                let pred_t = pred_ord(&t);
+                                let is_psi_pred_factor = match &m2 {
+                                    Ast::Psi(Some(sub), _) => ast_eq(sub, &pred_t),
+                                    Ast::Mul(p, _) => matches!(p.as_ref(),
+                                        Ast::Psi(Some(sub), _) if ast_eq(sub, &pred_t)),
+                                    _ => false,
+                                };
+                                let xc = if is_psi_pred_factor {
+                                    conv_ord(&m2)
+                                } else {
+                                    conv_sym(&card_arg_shift(&t, &m2))
+                                };
+                                parts.push(C::Psi(
+                                    Some(Box::new(conv_ord(&pred_t))),
+                                    Box::new(c_sum(vec![new_lead.clone(), xc])),
+                                ));
+                                continue;
+                            }
+                        }
+                        return None;
                     }
                     return Some(C::Psi(Some(Box::new(vc)), Box::new(c_sum(parts))));
                 }
@@ -1370,6 +1388,25 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
                 x_c.push(C::Psi(
                     Some(Box::new(conv_ord(&pred))),
                     Box::new(c_sum(vec![C::OmegaSub(Box::new(conv_ord(s))), xc])),
+                ));
+            }
+            Some(Head::Cardinal(s2)) if is_successor_ord(s2) => {
+                // Ω_{s'}·X tail (s' ≠ s) → ψ_{s'-1}(lead + M(X))
+                // (ψ(Ω_4^2+Ω_3) → ψ(Ω_4+ψ_2(Ω_4+1))).
+                let pred2 = pred_ord(s2);
+                let is_psi_pred_factor = match &m {
+                    Ast::Psi(Some(sub), _) => ast_eq(sub, &pred2),
+                    Ast::Mul(p, _) => matches!(p.as_ref(), Ast::Psi(Some(sub), _) if ast_eq(sub, &pred2)),
+                    _ => false,
+                };
+                let xc = if is_psi_pred_factor {
+                    conv_ord(&m)
+                } else {
+                    conv_sym(&card_arg_shift(s2, &m))
+                };
+                x_c.push(C::Psi(
+                    Some(Box::new(conv_ord(&pred2))),
+                    Box::new(c_sum(vec![lead.clone(), xc])),
                 ));
             }
             _ => {
@@ -3252,9 +3289,19 @@ mod tests {
         assert_eq!(conv("ψ_1(Ω_2^ω+Ω_2)"), "\\psi_{1}(\\Omega_{2}^{\\omega} + 1)");
         assert_eq!(conv("ψ_1(Ω_2^ω+Ω_2×2)"), "\\psi_{1}(\\Omega_{2}^{\\omega} + 2)");
         assert_eq!(conv("ψ_1(Ω_2^ω+Ω_2^2)"), "\\psi_{1}(\\Omega_{2}^{\\omega} + \\Omega_{2})");
-        // Finite-exponent lowering also applies above the collapse cardinal.
-        assert_eq!(conv("ψ_1(Ω_3^2+Ω_3)"), "\\psi_{1}(\\Omega_{3} + 1)");
-        assert_eq!(conv("ψ_1(Ω_(ω+1)^2+Ω_(ω+1))"), "\\psi_{1}(\\Omega_{\\omega + 1} + 1)");
+        // Finite-exponent lowering also applies above the collapse cardinal;
+        // Ω_s tails follow the ψ_0 logic (Ω_s·X → ψ_{s-1}(Ω_s+M(X))).
+        assert_eq!(conv("ψ_1(Ω_3^2+Ω_3)"), "\\psi_{1}(\\Omega_{3} + \\psi_{2}(\\Omega_{3} + 1))");
+        assert_eq!(
+            conv("ψ_1(Ω_3^2+Ω_3+Ω_2)"),
+            "\\psi_{1}(\\Omega_{3} + \\psi_{2}(\\Omega_{3} + 1) + 1)"
+        );
+        assert_eq!(conv("ψ_1(Ω_(ω+1)^2+Ω_(ω+1))"), "\\psi_{1}(\\Omega_{\\omega + 1} + \\psi_{\\omega}(\\Omega_{\\omega + 1} + 1))");
+        // Ω_{s'} tail (s' ≠ s) → ψ_{s'-1}(lead + M(X)), both ψ_0 and ψ_v.
+        assert_eq!(conv("ψ_1(Ω_4^2+Ω_3)"), "\\psi_{1}(\\Omega_{4} + \\psi_{2}(\\Omega_{4} + 1))");
+        assert_eq!(conv("ψ(Ω_4^2+Ω_3)"), "\\psi(\\Omega_{4} + \\psi_{2}(\\Omega_{4} + 1))");
+        assert_eq!(conv("ψ_1(Ω_4^2+Ω_3×2)"), "\\psi_{1}(\\Omega_{4} + \\psi_{2}(\\Omega_{4} + 2))");
+        assert_eq!(conv("ψ(Ω_4^2+Ω_3×2)"), "\\psi(\\Omega_{4} + \\psi_{2}(\\Omega_{4} + 2))");
         // is_above lead with an Ω_{v+1} tail folds to +k
         // (ψ_1(Ω_3+Ω_2) → ψ_1(ψ_2(0)+1)).
         assert_eq!(conv("ψ_1(Ω_3+Ω_2)"), "\\psi_{1}(\\psi_{2}(0) + 1)");

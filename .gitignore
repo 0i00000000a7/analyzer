@@ -42,3 +42,5 @@ analyzer-cli-*
 src/rust/target/
 
 OCN/
+
+.qoder/

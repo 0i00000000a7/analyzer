@@ -1199,7 +1199,7 @@
 "ψ_1(Ω_ω+ω)","\psi_{1}(\Omega_{\omega})\omega^{\omega}"
 "ψ_1(Ω_ω+Ω)","\psi_{1}(\Omega_{\omega})\Omega"
 "ψ_1(Ω_ω+Ω_2)","\psi_{1}(\Omega_{\omega} + 1)"
-"\psi_{1}(\Omega_{\omega} + \Omega_{3})","\psi_{1}(\Omega_{\omega} + \psi_{2}(\Omega_{3} + 1))"
+"\psi_{1}(\Omega_{\omega} + \Omega_{3})","\psi_{1}(\Omega_{\omega} + \psi_{2}(\Omega_{\omega} + 1))"
 "ψ_1(Ω_ω^2)","\psi_{1}(\Omega_{\omega}^{2})"
 "ψ_1(Ω_ω^2+1)","\psi_{1}(\Omega_{\omega}^{2})\omega"
 "ψ_1(Ω_ω^2+ψ_1(Ω_ω^2))","\psi_{1}(\Omega_{\omega}^{2})^{2}"

@@ -638,6 +638,33 @@ fn collapse_psi_next_cardinal(
                     }
                     return Some(C::Psi(Some(Box::new(vc)), Box::new(c_sum(parts))));
                 }
+                if is_above && as_nat(&e).is_none() {
+                    // Limit-exponent is_above lead Ω_s^λ stays; an
+                    // Ω_{v+1}·m tail collapses to ψ_v(lead + m)
+                    // (ψ_1(Ω_3^ω+Ω_2) → ψ_1(Ω_3^ω+ψ_1(Ω_3^ω+1))).
+                    let lead = conv_ord(&blocks[0]);
+                    let vp1: Ast = match v {
+                        Ast::Num(n) => Ast::Num(n + 1),
+                        other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
+                    };
+                    let mut parts: Vec<C> = vec![lead.clone()];
+                    for b in &blocks[1..] {
+                        let (h2, m2) = split_head_mult(b);
+                        let is_vp1 = match &h2 {
+                            Some(Head::Cardinal(t)) => ast_eq(t, &vp1),
+                            Some(Head::CardinalPow(t, _)) => ast_eq(t, &vp1),
+                            _ => false,
+                        };
+                        if !is_vp1 {
+                            return None;
+                        }
+                        parts.push(C::Psi(
+                            Some(Box::new(vc.clone())),
+                            Box::new(c_sum(vec![lead.clone(), conv_ord(&m2)])),
+                        ));
+                    }
+                    return Some(C::Psi(Some(Box::new(vc)), Box::new(c_sum(parts))));
+                }
                 if (is_next || is_above) && as_nat(&e).map_or(false, |n| n >= 2) {
                     // Finite-exponent lead lowers by one, keeping the
                     // multiplier; Ω_s-built tails divide by Ω_s
@@ -3667,6 +3694,12 @@ mod tests {
         assert_eq!(
             conv("ψ(Ω_3+Ω_2^ω+Ω_2)"),
             "\\psi(\\psi_{2}(0) + \\Omega_{2}^{\\omega} + \\psi_{1}(\\psi_{2}(0) + \\Omega_{2}^{\\omega} + 1))"
+        );
+        // is_above limit-exponent power lead stays; Ω_{v+1}·m tail collapses
+        // to ψ_v(lead + m) (ψ_1(Ω_3^ω+Ω_2) → ψ_1(Ω_3^ω+ψ_1(Ω_3^ω+1))).
+        assert_eq!(
+            conv("ψ_1(Ω_3^ω+Ω_2)"),
+            "\\psi_{1}(\\Omega_{3}^{\\omega} + \\psi_{1}(\\Omega_{3}^{\\omega} + 1))"
         );
         // An above-collapse-cardinal tail Ω_{s'} (s' > v+1) collapses to
         // ψ_{s'-1}(collapsed_lead + m), where collapsed_lead = ψ_{s-1}(σ)

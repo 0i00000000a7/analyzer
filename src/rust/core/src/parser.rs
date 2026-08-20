@@ -250,15 +250,45 @@ impl<'a> Parser<'a> {
             TokenKind::Psi => {
                 self.tok = self.lexer.next()?;
                 let mut sub = None;
+                let mut have_sub = false;
                 if self.tok.kind == TokenKind::Subscript {
                     self.tok = self.lexer.next()?;
                     sub = Some(Box::new(self.parse_primary()?));
+                    have_sub = true;
                 } else if let TokenKind::Num = self.tok.kind {
                     // ψ1(… ≡ ψ_1(…: a bare number right after ψ is the
                     // subscript.
                     let n = self.tok.num_value;
                     self.tok = self.lexer.next()?;
                     sub = Some(Box::new(Ast::Num(n)));
+                    have_sub = true;
+                } else if self.tok.kind == TokenKind::OmegaLower {
+                    // ψω(… ≡ ψ_ω(…: a bare ω right after ψ is the subscript.
+                    self.tok = self.lexer.next()?;
+                    sub = Some(Box::new(Ast::W));
+                    have_sub = true;
+                }
+                // No explicit subscript and ψ is followed by a group: it is
+                // the argument ψ(α), unless a second group follows, in which
+                // case the first is the subscript ψ(σ)(α) ≡ ψ_σ(α).
+                if !have_sub
+                    && (self.tok.kind == TokenKind::LParen
+                        || self.tok.kind == TokenKind::LBrace)
+                {
+                    let open1 = self.tok.kind;
+                    self.tok = self.lexer.next()?;
+                    let first = self.parse_expr()?;
+                    self.expect_close(open1)?;
+                    if self.tok.kind == TokenKind::LParen
+                        || self.tok.kind == TokenKind::LBrace
+                    {
+                        let open2 = self.tok.kind;
+                        self.tok = self.lexer.next()?;
+                        let arg = self.parse_expr()?;
+                        self.expect_close(open2)?;
+                        return Ok(Ast::Psi(Some(Box::new(first)), Box::new(arg)));
+                    }
+                    return Ok(Ast::Psi(None, Box::new(first)));
                 }
                 let open_kind = self.tok.kind;
                 if open_kind == TokenKind::LBrace {

@@ -512,15 +512,13 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
             let is_next = ast_eq(&pred_ord(&s), v) && !is_limit_multiple(&s);
             let is_limit_lead = !is_successor_ord(&s) && !matches!(&s, Ast::Num(_));
             let v_nat = as_nat(v);
-            let s_nat = as_nat(&s);
             let collapse_sub = v_nat.map(|vn| vn + 1);
-            let is_above = is_successor_ord(&s)
-                && !is_next
-                && match (s_nat, collapse_sub) {
-                    (Some(sn), Some(csn)) => sn > csn,
-                    (None, Some(_)) => true,
-                    _ => false,
-                };
+            let next_sub: Ast = match v {
+                Ast::Num(n) => Ast::Num(n + 1),
+                other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
+            };
+            let is_above =
+                is_successor_ord(&s) && !is_next && sub_ord_lt(&next_sub, &s);
             if !is_next && !is_above && !is_limit_lead {
                 return None;
             }
@@ -649,15 +647,13 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
             let is_next = ast_eq(&pred_ord(&s), v) && !is_limit_multiple(&s);
             let is_limit_lead = !is_successor_ord(&s) && !matches!(&s, Ast::Num(_));
             let v_nat = as_nat(v);
-            let s_nat = as_nat(&s);
             let collapse_sub = v_nat.map(|vn| vn + 1);
-            let is_above = is_successor_ord(&s)
-                && !is_next
-                && match (s_nat, collapse_sub) {
-                    (Some(sn), Some(csn)) => sn > csn,
-                    (None, Some(_)) => true,
-                    _ => false,
-                };
+            let next_sub: Ast = match v {
+                Ast::Num(n) => Ast::Num(n + 1),
+                other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
+            };
+            let is_above =
+                is_successor_ord(&s) && !is_next && sub_ord_lt(&next_sub, &s);
             if !is_next && !is_limit_lead && !is_above {
                 return None;
             }
@@ -3007,6 +3003,14 @@ mod tests {
         assert_eq!(conv("p1(Ω_2+1)"), conv("ψ_1(Ω_2+1)"));
         assert_eq!(conv("\\psi1(Ω_2)"), conv("ψ_1(Ω_2)"));
         assert_eq!(conv("ψ(Ω_2^2+ψ1(Ω_2))"), conv("ψ(Ω_2^2+ψ_1(Ω_2))"));
+        // ψω(… ≡ ψ_ω(…: a bare ω right after ψ is the subscript.
+        assert_eq!(conv("ψω(1)"), conv("ψ_ω(1)"));
+        assert_eq!(conv("ψω(Ω_(ω+1))"), conv("ψ_ω(Ω_(ω+1))"));
+        // ψ(σ)(α) ≡ ψ_σ(α): a parenthesized subscript before the argument.
+        assert_eq!(conv("ψ(ω+1)(0)"), conv("ψ_(ω+1)(0)"));
+        assert_eq!(conv("ψ(1)(Ω_2)"), conv("ψ_1(Ω_2)"));
+        // A single group is still the argument.
+        assert_eq!(conv("ψ(ω+1)"), conv("ψ(ω+1)"));
     }
 
     #[test]
@@ -3527,6 +3531,9 @@ mod tests {
             conv("ψ(Ω_2^Ω_2+Ω_2)"),
             "\\psi(\\Omega_{2}^{\\Omega_{2}} + \\psi_{1}(\\Omega_{2}^{\\Omega_{2}} + 1))"
         );
+        // Limit level v=ω: an above-collapse-cardinal finite-exponent lead
+        // still lowers its exponent (is_above must hold for limit v).
+        assert_eq!(conv("ψ_ω(Ω_(ω+2)^2)"), "\\psi_{\\omega}(\\Omega_{\\omega + 2})");
     }
 }
 

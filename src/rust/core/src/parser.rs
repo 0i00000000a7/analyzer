@@ -253,6 +253,12 @@ impl<'a> Parser<'a> {
                 if self.tok.kind == TokenKind::Subscript {
                     self.tok = self.lexer.next()?;
                     sub = Some(Box::new(self.parse_primary()?));
+                } else if let TokenKind::Num = self.tok.kind {
+                    // ψ1(… ≡ ψ_1(…: a bare number right after ψ is the
+                    // subscript.
+                    let n = self.tok.num_value;
+                    self.tok = self.lexer.next()?;
+                    sub = Some(Box::new(Ast::Num(n)));
                 }
                 let open_kind = self.tok.kind;
                 if open_kind == TokenKind::LBrace {

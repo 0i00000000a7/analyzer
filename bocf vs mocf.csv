@@ -1239,3 +1239,6 @@
 "\psi_{1}(\Omega_{3}^{2} + \Omega_{2}^{2})","\psi_{1}(\Omega_{3} + \Omega_{2})"
 "\psi(\Omega_{2}^{3} + \Omega_{2}×(\omega + 1))","\psi(\Omega_{2}^{2} + \psi_{1}(\Omega_{2}^{2} + \omega + 1))"
 "\psi(\Omega_{3}^{2} + \Omega_{2}^{2} + \Omega_{2})","\psi(\Omega_{3} + \Omega_{2} + \psi_{1}(\Omega_{3} + \Omega_{2} + 1))"
+"\psi(\Omega_{2}^{3} + \Omega_{2}^{2}\times2 + \Omega_{2})","\psi(\Omega_{2}^{2} + \Omega_{2}2 + \psi_{1}(\Omega_{2}^{2} + \Omega_{2}2 + 1))"
+"\psi(\Omega_{2}^{3} + \Omega_{2}^{2})","\psi(\Omega_{2}^{2} + \Omega_{2})"
+"\psi_{1}(\Omega_{4} + \Omega_{3})","\psi_{1}(\psi_{3}(0) + \psi_{2}(\Omega_{4} + 1))"

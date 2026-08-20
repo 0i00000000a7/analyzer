@@ -236,9 +236,15 @@ fn translate_down(block: &Ast) -> Ast {
 }
 
 /// Lower a finite Ω-cardinal power exponent by one; exponent 2 becomes the
-/// bare cardinal (Ω_s^2 → Ω_s, not Ω_s^1).
+/// bare cardinal (Ω_s^2 → Ω_s, not Ω_s^1). A multiplied power Ω_s^e×k lowers
+/// the power and keeps the multiplier (Ω_s^2×k → Ω_s×k).
 fn lower_cardpow_once(block: &Ast) -> Ast {
     match block {
+        Ast::Mul(p, k)
+            if matches!(p.as_ref(), Ast::Pow(b, _) if matches!(b.as_ref(), Ast::Omega(Some(_)))) =>
+        {
+            Ast::Mul(Box::new(lower_cardpow_once(p)), k.clone())
+        }
         Ast::Pow(base, e) => match as_nat(e) {
             Some(2) => (**base).clone(),
             Some(n) if n > 2 => Ast::Pow(base.clone(), Box::new(Ast::Num(n - 1))),
@@ -685,14 +691,44 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                 }
             }
             let mut rest_blocks = &blocks[rest_start..];
+            let vp1: Ast = match v {
+                Ast::Num(n) => Ast::Num(n + 1),
+                other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
+            };
+            // is_above: a leading tail successor cardinal Ω_{s'} above
+            // Ω_{v+1} collapses to ψ_{s'-1}(Ω_s + shift(m)) in the argument
+            // (ψ_1(Ω_4+Ω_3) → ψ_1(ψ_3(0)+ψ_2(Ω_4+1))).
+            let mut above_card_parts: Vec<C> = Vec::new();
+            if is_above {
+                let lead_card = Ast::Omega(Some(Box::new(s.clone())));
+                let mut i = 0usize;
+                while i < rest_blocks.len() {
+                    let (h2, m2) = split_head_mult(&rest_blocks[i]);
+                    let ht = match &h2 {
+                        Some(Head::Cardinal(t))
+                            if is_successor_ord(t) && sub_ord_lt(&vp1, t) =>
+                        {
+                            Some((*t).clone())
+                        }
+                        _ => None,
+                    };
+                    if let Some(t) = ht {
+                        let xc = conv_sym(&card_arg_shift(&t, &m2));
+                        above_card_parts.push(C::Psi(
+                            Some(Box::new(conv_ord(&pred_ord(&t)))),
+                            Box::new(c_sum(vec![conv_ord(&lead_card), xc])),
+                        ));
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                rest_blocks = &rest_blocks[i..];
+            }
             // is_above: tail Ω_{v+1}·k folds to +k in the argument
             // (ψ_1(Ω_3+Ω_2) → ψ_1(ψ_2(0)+1)).
             let mut above_fold: Vec<Ast> = Vec::new();
             if is_above {
-                let vp1: Ast = match v {
-                    Ast::Num(n) => Ast::Num(n + 1),
-                    other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
-                };
                 let mut i = 0usize;
                 while i < rest_blocks.len() {
                     let mc = match &rest_blocks[i] {
@@ -732,6 +768,11 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
             } else {
                 conv_ord(&blocks[0])
             };
+            if !above_card_parts.is_empty() {
+                let mut p = vec![base_arg];
+                p.extend(above_card_parts);
+                base_arg = c_sum(p);
+            }
             if !above_fold.is_empty() {
                 let fold_c = conv_ord(&sum_of(&above_fold));
                 base_arg = c_sum(vec![base_arg, fold_c]);
@@ -1406,11 +1447,9 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
                 Some(((*t).clone(), m0.clone(), false))
             }
             Some(Head::CardinalPow(t, e))
-                if is_successor_ord(t)
-                    && as_nat(e).map_or(false, |n| n >= 2)
-                    && matches!(m0, Ast::Num(1)) =>
+                if is_successor_ord(t) && as_nat(e).map_or(false, |n| n >= 2) =>
             {
-                // Ω_{s'}^e counts as an Ω_{s'}-block carrying its lowering
+                // Ω_{s'}^e×k counts as an Ω_{s'}-block carrying its lowering
                 Some(((*t).clone(), lower_cardpow_once(b), true))
             }
             _ => None,
@@ -1427,9 +1466,7 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
                         Some((mj.clone(), false))
                     }
                     Some(Head::CardinalPow(t, ej))
-                        if ast_eq(t, &g_s)
-                            && as_nat(ej).map_or(false, |n| n >= 2)
-                            && matches!(mj, Ast::Num(1)) =>
+                        if ast_eq(t, &g_s) && as_nat(ej).map_or(false, |n| n >= 2) =>
                     {
                         Some((lower_cardpow_once(&blocks[j]), true))
                     }
@@ -1449,11 +1486,13 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
             let mut arg_parts: Vec<C> = vec![lead.clone()];
             let mut has_bare = false;
             for (m, is_pow) in &mults {
-                // s' < s: a power block lowers into the outer argument and
-                // also joins the ψ_{s'-1} argument
-                // (ψ(Ω_3^2+Ω_2^2+Ω_2) → ψ(Ω_3+Ω_2+ψ_1(Ω_3+Ω_2+1))); a
-                // bare Ω_{s'}·k block becomes the ψ_{s'-1} term itself.
-                if *is_pow && !ast_eq(&g_s, s) {
+                // A power block lowers into the outer argument and also joins
+                // the ψ_{s'-1} argument (ψ(Ω_3^2+Ω_2^2+Ω_2) →
+                // ψ(Ω_3+Ω_2+ψ_1(Ω_3+Ω_2+1)), ψ(Ω_2^3+Ω_2^2×2+Ω_2) →
+                // ψ(Ω_2^2+Ω_2·2+ψ_1(Ω_2^2+Ω_2·2+1))). With no bare block it
+                // only reaches the outer argument (ψ(Ω_2^3+Ω_2^2) →
+                // ψ(Ω_2^2+Ω_2)). A bare Ω_{s'}·k block supplies the σ-fold.
+                if *is_pow {
                     let mc = conv_ord(m);
                     outer.push(mc.clone());
                     arg_parts.push(mc);
@@ -2957,6 +2996,17 @@ mod tests {
     }
 
     #[test]
+    fn psi_subscript_bare_number() {
+        // ψ1(… ≡ ψ_1(…: a bare number right after ψ is the subscript.
+        assert_eq!(conv("ψ1(Ω_2)"), conv("ψ_1(Ω_2)"));
+        assert_eq!(conv("ψ2(Ω_3)"), conv("ψ_2(Ω_3)"));
+        assert_eq!(conv("ψ12(Ω_13)"), conv("ψ_12(Ω_13)"));
+        assert_eq!(conv("p1(Ω_2+1)"), conv("ψ_1(Ω_2+1)"));
+        assert_eq!(conv("\\psi1(Ω_2)"), conv("ψ_1(Ω_2)"));
+        assert_eq!(conv("ψ(Ω_2^2+ψ1(Ω_2))"), conv("ψ(Ω_2^2+ψ_1(Ω_2))"));
+    }
+
+    #[test]
     fn top_level_psi_next_cardinal_tails() {
         // ψ_v(Ω_{v+1} + small) → ψ_v(0)·ω^{small}
         assert_eq!(conv("ψ_1(Ω_2+1)"), "\\psi_{1}(0)\\omega");
@@ -3447,6 +3497,26 @@ mod tests {
         assert_eq!(
             conv("ψ(Ω_3+Ω_2)"),
             "\\psi(\\psi_{2}(0) + \\psi_{1}(\\psi_{2}(0) + 1))"
+        );
+        // A multiplied power tail Ω_s^e×k lowers (Ω_s^{e-1}×k) into both the
+        // outer argument and the ψ_{s-1} argument
+        // (ψ(Ω_2^3+Ω_2^2×2+Ω_2) → ψ(Ω_2^2+Ω_2·2+ψ_1(Ω_2^2+Ω_2·2+1))).
+        assert_eq!(
+            conv("ψ(Ω_2^3+Ω_2^2×2+Ω_2)"),
+            "\\psi(\\Omega_{2}^{2} + \\Omega_{2}2 + \\psi_{1}(\\Omega_{2}^{2} + \\Omega_{2}2 + 1))"
+        );
+        // A lone power tail lowers into the outer argument only, with no ψ
+        // term (ψ(Ω_2^3+Ω_2^2) → ψ(Ω_2^2+Ω_2)).
+        assert_eq!(conv("ψ(Ω_2^3+Ω_2^2)"), "\\psi(\\Omega_{2}^{2} + \\Omega_{2})");
+        // An above-collapse-cardinal tail Ω_{s'} (s' > v+1) collapses to
+        // ψ_{s'-1}(Ω_s + m) (ψ_1(Ω_4+Ω_3) → ψ_1(ψ_3(0)+ψ_2(Ω_4+1))).
+        assert_eq!(
+            conv("ψ_1(Ω_4+Ω_3)"),
+            "\\psi_{1}(\\psi_{3}(0) + \\psi_{2}(\\Omega_{4} + 1))"
+        );
+        assert_eq!(
+            conv("ψ_1(Ω_4+Ω_3×2)"),
+            "\\psi_{1}(\\psi_{3}(0) + \\psi_{2}(\\Omega_{4} + 2))"
         );
     }
 }

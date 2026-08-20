@@ -951,11 +951,24 @@ fn finish_limit_tail(
                     let above_collapse = sub_ord_lt(&vp1, s2);
                     if is_limit_lead && !matches!(v, Ast::Num(0)) && !is_collapse_card && above_collapse {
                         // v ≥ 1: a tail cardinal above the collapse
-                        // cardinal Ω_{v+1} (e.g. Ω_ω > Ω_2 inside ψ_1)
-                        // stays whole in the argument; Ω_{u+1}·ψ_u(X)
-                        // becomes ψ_u(X′ + ψ_u(X′)).
+                        // cardinal Ω_{v+1} (e.g. Ω_ω > Ω_2 inside ψ_1);
+                        // Ω_{u+1}·ψ_u(X) becomes ψ_u(X′ + ψ_u(X′)), a bare
+                        // successor cardinal Ω_{s2}·m collapses to
+                        // ψ_{s2-1}(Ω_{s2}+m) (ψ_1(Ω_ω+Ω_3) →
+                        // ψ_1(Ω_ω+ψ_2(Ω_3+1))), and a limit-subscript
+                        // cardinal stays whole in the argument.
                         if let Some(f) = collapse_card_mul_psi(b) {
                             limit_arg_parts.push(f);
+                        } else if is_successor_ord(s2) {
+                            let s2_card =
+                                Ast::Omega(Some(Box::new(s2.clone())), None);
+                            limit_arg_parts.push(C::Psi(
+                                Some(Box::new(conv_ord(&pred_ord(s2)))),
+                                Box::new(c_sum(vec![
+                                    conv_ord(&s2_card),
+                                    conv_ord(&m2),
+                                ])),
+                            ));
                         } else {
                             limit_arg_parts.push(conv_ord(b));
                         }
@@ -986,7 +999,11 @@ fn finish_limit_tail(
                     }
                 }
                 _ => {
-                    if matches!(v, Ast::Num(_)) {
+                    if matches!(v, Ast::Num(_)) && below_next_cardinal(v, b) {
+                        // natural level, tail below Ω_{v+1}: peel as ω^β
+                        // (ψ_1(Ω_ω+Ω) → ψ_1(Ω_ω)·Ω).
+                        factors.push(normalize_omegapow(conv_ord(b)));
+                    } else if matches!(v, Ast::Num(_)) {
                         limit_arg_parts.push(conv_ord(&translate_down(b)));
                     } else {
                         // ψ_ω-level: tails below the collapse cardinal peel
@@ -3173,8 +3190,19 @@ mod tests {
         assert_eq!(conv("ψ_1(Ω_ω)"), "\\psi_{1}(\\Omega_{\\omega})");
         assert_eq!(conv("ψ_1(Ω_ω+1)"), "\\psi_{1}(\\Omega_{\\omega})\\omega");
         assert_eq!(conv("ψ_1(Ω_ω+ω)"), "\\psi_{1}(\\Omega_{\\omega})\\omega^{\\omega}");
-        assert_eq!(conv("ψ_1(Ω_ω+Ω)"), "\\psi_{1}(\\Omega_{\\omega} + 1)");
+        assert_eq!(conv("ψ_1(Ω_ω+Ω)"), "\\psi_{1}(\\Omega_{\\omega})\\Omega");
         assert_eq!(conv("ψ_1(Ω_ω+Ω_2)"), "\\psi_{1}(\\Omega_{\\omega} + 1)");
+        // successor tail above the collapse cardinal under a limit lead
+        // collapses to ψ_{s2-1}(Ω_{s2}+m) (ψ_1(Ω_ω+Ω_3) →
+        // ψ_1(Ω_ω+ψ_2(Ω_3+1))).
+        assert_eq!(
+            conv("ψ_1(Ω_ω+Ω_3)"),
+            "\\psi_{1}(\\Omega_{\\omega} + \\psi_{2}(\\Omega_{3} + 1))"
+        );
+        assert_eq!(
+            conv("ψ_1(Ω_ω+Ω_3×2)"),
+            "\\psi_{1}(\\Omega_{\\omega} + \\psi_{2}(\\Omega_{3} + 2))"
+        );
         // successor lead above the collapse cardinal → ψ_{s-1}(0) as argument
         assert_eq!(conv("ψ_1(Ω_3+Ω)"), "\\psi_{1}(\\psi_{2}(0))\\Omega");
         assert_eq!(conv("ψ_1(Ω_(ω+1))"), "\\psi_{1}(\\psi_{\\omega}(0))");

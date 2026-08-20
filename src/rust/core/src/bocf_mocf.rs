@@ -85,16 +85,19 @@ fn as_nat(a: &Ast) -> Option<i32> {
 fn is_below_omega1(a: &Ast) -> bool {
     match a {
         Ast::Num(_) | Ast::W => true,
-        Ast::Psi(None, _) => true,
+        Ast::Psi(None, _, ..) => true,
         Ast::Pow(b, _) => is_below_omega1(b),
         Ast::Mul(l, r) => is_below_omega1(l) && is_below_omega1(r),
-        Ast::Omega(_) => false,
-        Ast::Psi(Some(_), _) => false,
+        Ast::Omega(_, ..) => false,
+        Ast::Psi(Some(_), _, ..) => false,
         Ast::Add(l, r) => is_below_omega1(l) && is_below_omega1(r),
     }
 }
 
 /// Conservative ordinal comparison a < b on subscript-shaped ASTs.
+/// Purely structural — never re-evaluates ψ (BOCF and MOCF assign different
+/// values to the same ψ-syntax, so processed values must not be re-evaluated
+/// for comparison).
 fn sub_ord_lt(a: &Ast, b: &Ast) -> bool {
     if ast_eq(a, b) {
         return false;
@@ -102,27 +105,38 @@ fn sub_ord_lt(a: &Ast, b: &Ast) -> bool {
     match (a, b) {
         (Ast::Num(x), Ast::Num(y)) => x < y,
         (Ast::Num(_), Ast::W) => true,
-        (Ast::Num(_), Ast::Omega(_)) => true,
-        (Ast::Num(_), Ast::Psi(Some(_), _)) => true,
+        (Ast::Num(_), Ast::Omega(_, ..)) => true,
+        (Ast::Num(_), Ast::Psi(Some(_), _, ..)) => true,
         (Ast::Num(_), Ast::Add(l, _)) => sub_ord_leq(a, l),
-        (Ast::W, Ast::Omega(_)) => true,
-        (Ast::W, Ast::Psi(Some(_), _)) => true,
+        (Ast::W, Ast::Omega(_, ..)) => true,
+        (Ast::W, Ast::Psi(Some(_), _, ..)) => true,
         (Ast::W, Ast::Add(l, _)) => sub_ord_leq(a, l),
-        (Ast::Omega(Some(x)), Ast::Omega(Some(y))) => sub_ord_lt(x, y),
-        (Ast::Omega(Some(x)), Ast::Psi(Some(u), _)) => sub_ord_lt(x, u),
-        (Ast::Omega(Some(_)), Ast::Add(l, _)) => sub_ord_leq(a, l),
-        (Ast::Omega(None), Ast::Add(l, _)) => sub_ord_leq(a, l),
-        (Ast::Psi(Some(u), _), Ast::Omega(Some(y))) => sub_ord_lt(u, y),
-        (Ast::Psi(Some(_), _), Ast::Add(l, _)) => sub_ord_leq(a, l),
+        (Ast::Omega(Some(x), ..), Ast::Omega(Some(y), ..)) => sub_ord_lt(x, y),
+        (Ast::Omega(Some(x), ..), Ast::Psi(Some(u), _, ..)) => sub_ord_lt(x, u),
+        (Ast::Omega(Some(_), ..), Ast::Add(l, _)) => sub_ord_leq(a, l),
+        (Ast::Omega(None, ..), Ast::Add(l, _)) => sub_ord_leq(a, l),
+        (Ast::Psi(Some(u), _, ..), Ast::Omega(Some(y), ..)) => sub_ord_lt(u, y),
+        (Ast::Psi(Some(_), _, ..), Ast::Add(l, _)) => sub_ord_leq(a, l),
         (Ast::Add(l, _), _) => sub_ord_lt(l, b),
         // Two multiples of the same leading term compare by multiplier
         // (ω×2 < ω×3 ⟺ 2 < 3).
         (Ast::Mul(l1, r1), Ast::Mul(l2, r2)) if ast_eq(l1, l2) => sub_ord_lt(r1, r2),
+        // A power vs a product: same-base powers compare exponents
+        // (ω^3 > ω^2×2, ω^2 < ω^2×2); otherwise compare the base.
+        (Ast::Pow(b1, e1), Ast::Mul(l2, _)) => match l2.as_ref() {
+            Ast::Pow(b2, e2) if ast_eq(b1, b2) => !sub_ord_lt(e2, e1),
+            _ => sub_ord_lt(b1, l2),
+        },
         // a < l·r (a limit-multiple) reduces to a ≤ l when a is not a
         // multiple of l with its own multiplier (ω+1 < ω×2 ⟺ ω+1 ≤ ω×2).
         (_, Ast::Mul(l, _)) => sub_ord_leq(a, l),
+        // a < b^e reduces to a ≤ b (Add/Mul left sides are reduced by the
+        // arms above; ω+1 < ω^2 ⟺ ω+1 ≤ ω^2 via the Add arm).
+        (_, Ast::Pow(b, _)) => sub_ord_leq(a, b),
         (Ast::Mul(l, _), _) => sub_ord_lt(l, b),
-        (Ast::Pow(base, e1), Ast::Pow(base2, e2)) if ast_eq(base, base2) => sub_ord_lt(e1, e2),
+        (Ast::Pow(base, e1), Ast::Pow(base2, e2)) if ast_eq(base, base2) => {
+            sub_ord_lt(e1, e2)
+        }
         (Ast::Pow(base, _), _) => sub_ord_lt(base, b),
         _ => false,
     }
@@ -132,15 +146,61 @@ fn sub_ord_leq(a: &Ast, b: &Ast) -> bool {
     ast_eq(a, b) || sub_ord_lt(a, b)
 }
 
+/// Term-aware subscript comparison: when both embedded original-BOCF
+/// subscript terms are available, compare them with the term layer's
+/// complete ordering (term::lt). This correctly orders values the structural
+/// comparison cannot (e.g. ψ_4(Ω_5) > Ω_4). Falls back to the structural
+/// comparison when a term is missing.
+fn sub_ord_lt_t(
+    a: &Ast,
+    ta: Option<&crate::term::Term>,
+    b: &Ast,
+    tb: Option<&crate::term::Term>,
+) -> bool {
+    if ast_eq(a, b) {
+        return false;
+    }
+    if let (Some(x), Some(y)) = (ta, tb) {
+        return crate::term::lt(x, y);
+    }
+    sub_ord_lt(a, b)
+}
+
+fn sub_ord_leq_t(
+    a: &Ast,
+    ta: Option<&crate::term::Term>,
+    b: &Ast,
+    tb: Option<&crate::term::Term>,
+) -> bool {
+    if ast_eq(a, b) {
+        return true;
+    }
+    if let (Some(x), Some(y)) = (ta, tb) {
+        return crate::term::lt(x, y) || crate::term::eq(x, y);
+    }
+    sub_ord_lt(a, b)
+}
+
+/// Extract the embedded original-BOCF subscript term from a lead block
+/// (Ω_s, Ω_s×k or Ω_s^e), digging through the product/power to the Ω node.
+fn block_sub_term(block: &Ast) -> Option<&crate::term::Term> {
+    match block {
+        Ast::Omega(_, t) => t.as_ref(),
+        Ast::Mul(b, _) => block_sub_term(b),
+        Ast::Pow(b, _) => block_sub_term(b),
+        _ => None,
+    }
+}
+
 /// True if b < Ω_{v+1}.  Any ψ_a(b) and its operations with values below
 /// Ω_{a+1} stay below Ω_{a+1}, so ψ-blocks with a ≤ v (and products,
 /// powers and sums of such blocks) qualify.
 fn below_next_cardinal(v: &Ast, b: &Ast) -> bool {
     match b {
-        Ast::Num(_) | Ast::W | Ast::Psi(None, _) => true,
-        Ast::Psi(Some(u), _) => sub_ord_leq(u, v),
-        Ast::Omega(None) => !matches!(v, Ast::Num(0)),
-        Ast::Omega(Some(t)) => sub_ord_leq(t, v),
+        Ast::Num(_) | Ast::W | Ast::Psi(None, _, ..) => true,
+        Ast::Psi(Some(u), _, ..) => sub_ord_leq(u, v),
+        Ast::Omega(None, ..) => !matches!(v, Ast::Num(0)),
+        Ast::Omega(Some(t), ..) => sub_ord_leq(t, v),
         Ast::Pow(base, _) => below_next_cardinal(v, base),
         Ast::Mul(l, r) => below_next_cardinal(v, l) && below_next_cardinal(v, r),
         Ast::Add(l, r) => below_next_cardinal(v, l) && below_next_cardinal(v, r),
@@ -160,11 +220,11 @@ enum Head {
 
 fn classify_head(t: &Ast) -> Option<Head> {
     match t {
-        Ast::Omega(None) => Some(Head::OmegaPow(Ast::Num(1))),
-        Ast::Omega(Some(s)) => Some(Head::Cardinal((**s).clone())),
+        Ast::Omega(None, ..) => Some(Head::OmegaPow(Ast::Num(1))),
+        Ast::Omega(Some(s), ..) => Some(Head::Cardinal((**s).clone())),
         Ast::Pow(b, e) => match b.as_ref() {
-            Ast::Omega(None) => Some(Head::OmegaPow((**e).clone())),
-            Ast::Omega(Some(s)) => Some(Head::CardinalPow((**s).clone(), (**e).clone())),
+            Ast::Omega(None, ..) => Some(Head::OmegaPow((**e).clone())),
+            Ast::Omega(Some(s), ..) => Some(Head::CardinalPow((**s).clone(), (**e).clone())),
             _ => None,
         },
         _ => None,
@@ -193,13 +253,13 @@ fn split_head_mult(block: &Ast) -> (Option<Head>, Ast) {
 /// Subtract one Ω-power level from a tail block (for the value translation).
 fn translate_down(block: &Ast) -> Ast {
     match block {
-        Ast::Omega(None) => Ast::Num(1),
-        Ast::Mul(b, k) if matches!(b.as_ref(), Ast::Omega(None)) => (**k).clone(),
+        Ast::Omega(None, ..) => Ast::Num(1),
+        Ast::Mul(b, k) if matches!(b.as_ref(), Ast::Omega(None, ..)) => (**k).clone(),
         Ast::Mul(b, _)
-            if matches!(b.as_ref(), Ast::Omega(Some(sub)) if is_successor_ord(sub)) =>
+            if matches!(b.as_ref(), Ast::Omega(Some(sub), ..) if is_successor_ord(sub)) =>
         {
             match b.as_ref() {
-                Ast::Omega(Some(_)) => match block {
+                Ast::Omega(Some(_), ..) => match block {
                     Ast::Mul(_, k) => (**k).clone(),
                     _ => unreachable!(),
                 },
@@ -210,18 +270,18 @@ fn translate_down(block: &Ast) -> Ast {
             let tb = translate_down(b);
             if matches!(tb, Ast::Num(1)) { (**k).clone() } else { Ast::Mul(Box::new(tb), k.clone()) }
         }
-        Ast::Pow(b, e) if matches!(b.as_ref(), Ast::Omega(None)) => {
+        Ast::Pow(b, e) if matches!(b.as_ref(), Ast::Omega(None, ..)) => {
             if let Some(n) = as_nat(e) {
-                Ast::Pow(Box::new(Ast::Omega(None)), Box::new(Ast::Num(n - 1)))
+                Ast::Pow(Box::new(Ast::Omega(None, None)), Box::new(Ast::Num(n - 1)))
             } else {
                 block.clone()
             }
         }
-        Ast::Pow(b, e) if matches!(b.as_ref(), Ast::Omega(Some(_))) => {
+        Ast::Pow(b, e) if matches!(b.as_ref(), Ast::Omega(Some(_), ..)) => {
             // True-limit subscripts (Ω_ω, Ω_Ω, …) keep their powers;
             // successor subscripts lower a finite exponent by one.
             let is_limit_sub = match b.as_ref() {
-                Ast::Omega(Some(sub)) => !is_successor_ord(sub) && !matches!(sub.as_ref(), Ast::Num(_)),
+                Ast::Omega(Some(sub), ..) => !is_successor_ord(sub) && !matches!(sub.as_ref(), Ast::Num(_)),
                 _ => false,
             };
             if is_limit_sub {
@@ -247,7 +307,7 @@ fn translate_down(block: &Ast) -> Ast {
 fn lower_cardpow_once(block: &Ast) -> Ast {
     match block {
         Ast::Mul(p, k)
-            if matches!(p.as_ref(), Ast::Pow(b, _) if matches!(b.as_ref(), Ast::Omega(Some(_)))) =>
+            if matches!(p.as_ref(), Ast::Pow(b, _) if matches!(b.as_ref(), Ast::Omega(Some(_), ..))) =>
         {
             Ast::Mul(Box::new(lower_cardpow_once(p)), k.clone())
         }
@@ -295,10 +355,10 @@ fn bocf_to_c(input: &str) -> Result<C, String> {
 /// ψ-blocks and everything else stay syntactically untouched.
 fn rewrite_nonstandard_psi(a: &Ast) -> Ast {
     match a {
-        Ast::Psi(Some(sub), arg) => {
+        Ast::Psi(Some(sub), arg, ..) => {
             let arg = rewrite_nonstandard_psi(arg);
             let sub = rewrite_nonstandard_psi(sub);
-            let node = Ast::Psi(Some(Box::new(sub.clone())), Box::new(arg));
+            let node = Ast::Psi(Some(Box::new(sub.clone())), Box::new(arg), None);
             match crate::parser::eval_ast(&node) {
                 Ok(t) => {
                     let s = crate::term::standard_form(&t);
@@ -314,7 +374,7 @@ fn rewrite_nonstandard_psi(a: &Ast) -> Ast {
                 Err(_) => node,
             }
         }
-        Ast::Psi(None, arg) => Ast::Psi(None, Box::new(rewrite_nonstandard_psi(arg))),
+        Ast::Psi(None, arg, ..) => Ast::Psi(None, Box::new(rewrite_nonstandard_psi(arg)), None),
         Ast::Add(l, r) => Ast::Add(
             Box::new(rewrite_nonstandard_psi(l)),
             Box::new(rewrite_nonstandard_psi(r)),
@@ -368,9 +428,9 @@ fn omega_a_ast(a: &crate::term::Term) -> Ast {
     if tm::is_zero(a) {
         Ast::W
     } else if tm::eq(a, &tm::one()) {
-        Ast::Omega(None)
+        Ast::Omega(None, None)
     } else {
-        Ast::Omega(Some(Box::new(term_to_ast(a))))
+        Ast::Omega(Some(Box::new(term_to_ast(a))), Some(a.clone()))
     }
 }
 
@@ -381,9 +441,9 @@ fn term_block_ast(p: &crate::term::Term, count: i32) -> Ast {
     let b = &node.b;
     let psi_form = || {
         if tm::is_zero(a) {
-            Ast::Psi(None, Box::new(term_to_ast(b)))
+            Ast::Psi(None, Box::new(term_to_ast(b)), None)
         } else {
-            Ast::Psi(Some(Box::new(term_to_ast(a))), Box::new(term_to_ast(b)))
+            Ast::Psi(Some(Box::new(term_to_ast(a))), Box::new(term_to_ast(b)), Some(a.clone()))
         }
     };
     let ast = if tm::is_zero(b) {
@@ -420,8 +480,8 @@ fn conv_ord(n: &Ast) -> C {
     match n {
         Ast::Num(k) => c_nat(*k),
         Ast::W => c_omega(),
-        Ast::Omega(None) => C::Omega,
-        Ast::Omega(Some(s)) => C::OmegaSub(Box::new(conv_ord(s))),
+        Ast::Omega(None, ..) => C::Omega,
+        Ast::Omega(Some(s), ..) => C::OmegaSub(Box::new(conv_ord(s))),
         Ast::Add(_, _) => {
             let mut blocks = Vec::new();
             flatten_add(n, &mut blocks);
@@ -429,25 +489,27 @@ fn conv_ord(n: &Ast) -> C {
         }
         Ast::Mul(l, r) => c_mul(conv_ord(l), conv_ord(r)),
         Ast::Pow(b, e) => conv_pow(b, e),
-        Ast::Psi(sub, arg) => conv_psi(sub.as_deref(), arg),
+        Ast::Psi(sub, arg, st) => conv_psi(sub.as_deref(), arg, st.as_ref()),
     }
 }
 
 fn conv_pow(base: &Ast, exp: &Ast) -> C {
     match base {
         Ast::W => C::OmegaPow(Box::new(conv_ord(exp))),
-        Ast::Omega(None) => C::Pow(Box::new(C::Omega), Box::new(conv_ord(exp))),
-        Ast::Omega(Some(_)) => C::Pow(Box::new(conv_ord(base)), Box::new(conv_ord(exp))),
+        Ast::Omega(None, ..) => C::Pow(Box::new(C::Omega), Box::new(conv_ord(exp))),
+        Ast::Omega(Some(_), ..) => C::Pow(Box::new(conv_ord(base)), Box::new(conv_ord(exp))),
         _ => C::Pow(Box::new(conv_ord(base)), Box::new(conv_ord(exp))),
     }
 }
 
 /// Convert ψ_v(a).  v = None is the level-0 collapse (the main region).
-fn conv_psi(sub: Option<&Ast>, arg: &Ast) -> C {
+/// `sub_term` is the embedded original-BOCF term of the subscript v (when
+/// available), used for term-layer ordinal comparisons.
+fn conv_psi(sub: Option<&Ast>, arg: &Ast, sub_term: Option<&crate::term::Term>) -> C {
     match sub {
         None => conv_psi0(arg),
         Some(v) => {
-            if let Some(c) = collapse_psi_next_cardinal(v, arg) {
+            if let Some(c) = collapse_psi_next_cardinal(v, arg, sub_term) {
                 return c;
             }
             // General rule: ψ_v(X + β) = ψ_v(X)·ω^β for any trailing
@@ -471,7 +533,7 @@ fn conv_psi(sub: Option<&Ast>, arg: &Ast) -> C {
                 };
                 if peel {
                     let x = sum_of(&blocks[..blocks.len() - 1]);
-                    let base = conv_psi(Some(v), &x);
+                    let base = conv_psi(Some(v), &x, sub_term);
                     return c_mul(base, C::OmegaPow(Box::new(conv_ord(&last))));
                 }
             }
@@ -502,7 +564,11 @@ fn is_limit_multiple(s: &Ast) -> bool {
     }
 }
 
-fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
+fn collapse_psi_next_cardinal(
+    v: &Ast,
+    arg: &Ast,
+    v_term: Option<&crate::term::Term>,
+) -> Option<C> {
     let mut blocks = Vec::new();
     flatten_add(arg, &mut blocks);
     if blocks.is_empty() {
@@ -510,6 +576,9 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
     }
     let (head_opt, mult) = split_head_mult(&blocks[0]);
     let vc = conv_ord(v);
+    // Embedded original-BOCF terms for term-layer comparison of subscripts.
+    let lead_s_term = block_sub_term(&blocks[0]);
+    let next_sub_term: Option<crate::term::Term> = v_term.map(crate::term::succ);
     match head_opt {
         Some(Head::CardinalPow(s, e)) => {
             // Successor-cardinal powers lower their exponent by one
@@ -523,8 +592,9 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                 Ast::Num(n) => Ast::Num(n + 1),
                 other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
             };
-            let is_above =
-                is_successor_ord(&s) && !is_next && sub_ord_lt(&next_sub, &s);
+            let is_above = is_successor_ord(&s)
+                && !is_next
+                && sub_ord_lt_t(&next_sub, next_sub_term.as_ref(), &s, lead_s_term);
             if !is_next && !is_above && !is_limit_lead {
                 return None;
             }
@@ -558,8 +628,8 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                         }
                         // Ω_s → 1, Ω_s·k → k, Ω_s^e → Ω_s^{e-1}
                         let tb = match b {
-                            Ast::Omega(Some(_)) => Ast::Num(1),
-                            Ast::Mul(p, k) if matches!(p.as_ref(), Ast::Omega(Some(_))) => {
+                            Ast::Omega(Some(_), ..) => Ast::Num(1),
+                            Ast::Mul(p, k) if matches!(p.as_ref(), Ast::Omega(Some(_), ..)) => {
                                 (**k).clone()
                             }
                             _ => translate_down(b),
@@ -617,9 +687,9 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                             if is_successor_ord(&t) && sub_ord_lt(&vp1, &t) {
                                 let pred_t = pred_ord(&t);
                                 let is_psi_pred_factor = match &m2 {
-                                    Ast::Psi(Some(sub), _) => ast_eq(sub, &pred_t),
+                                    Ast::Psi(Some(sub), _, ..) => ast_eq(sub, &pred_t),
                                     Ast::Mul(p, _) => matches!(p.as_ref(),
-                                        Ast::Psi(Some(sub), _) if ast_eq(sub, &pred_t)),
+                                        Ast::Psi(Some(sub), _, ..) if ast_eq(sub, &pred_t)),
                                     _ => false,
                                 };
                                 let xc = if is_psi_pred_factor {
@@ -658,8 +728,9 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                 Ast::Num(n) => Ast::Num(n + 1),
                 other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
             };
-            let is_above =
-                is_successor_ord(&s) && !is_next && sub_ord_lt(&next_sub, &s);
+            let is_above = is_successor_ord(&s)
+                && !is_next
+                && sub_ord_lt_t(&next_sub, next_sub_term.as_ref(), &s, lead_s_term);
             if !is_next && !is_limit_lead && !is_above {
                 return None;
             }
@@ -672,9 +743,9 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                 let mut extra: Vec<Ast> = Vec::new();
                 for b in &blocks[1..] {
                     let mc = match b {
-                        Ast::Omega(Some(t)) if ast_eq(t, &s) => Some(Ast::Num(1)),
+                        Ast::Omega(Some(t), ..) if ast_eq(t, &s) => Some(Ast::Num(1)),
                         Ast::Mul(p, k) => match p.as_ref() {
-                            Ast::Omega(Some(t)) if ast_eq(t, &s) => Some((**k).clone()),
+                            Ast::Omega(Some(t), ..) if ast_eq(t, &s) => Some((**k).clone()),
                             _ => None,
                         },
                         _ => None,
@@ -698,11 +769,15 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                 other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
             };
             // is_above: a leading tail successor cardinal Ω_{s'} above
-            // Ω_{v+1} collapses to ψ_{s'-1}(Ω_s + shift(m)) in the argument
-            // (ψ_1(Ω_4+Ω_3) → ψ_1(ψ_3(0)+ψ_2(Ω_4+1))).
+            // Ω_{v+1} collapses to ψ_{s'-1}(collapsed_lead + shift(m)), where
+            // collapsed_lead = ψ_{s-1}(σ(mult)) (ψ_1(Ω_4+Ω_3) →
+            // ψ_1(ψ_3(0)+ψ_2(ψ_3(0)+1))).
             let mut above_card_parts: Vec<C> = Vec::new();
             if is_above {
-                let lead_card = Ast::Omega(Some(Box::new(s.clone())));
+                let collapsed_lead = C::Psi(
+                    Some(Box::new(conv_ord(&pred_ord(&s)))),
+                    Box::new(sigma(&mult)),
+                );
                 let mut i = 0usize;
                 while i < rest_blocks.len() {
                     let (h2, m2) = split_head_mult(&rest_blocks[i]);
@@ -718,7 +793,7 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                         let xc = conv_sym(&card_arg_shift(&t, &m2));
                         above_card_parts.push(C::Psi(
                             Some(Box::new(conv_ord(&pred_ord(&t)))),
-                            Box::new(c_sum(vec![conv_ord(&lead_card), xc])),
+                            Box::new(c_sum(vec![collapsed_lead.clone(), xc])),
                         ));
                         i += 1;
                     } else {
@@ -734,14 +809,14 @@ fn collapse_psi_next_cardinal(v: &Ast, arg: &Ast) -> Option<C> {
                 let mut i = 0usize;
                 while i < rest_blocks.len() {
                     let mc = match &rest_blocks[i] {
-                        Ast::Omega(Some(t)) if ast_eq(t, &vp1) => Some(Ast::Num(1)),
+                        Ast::Omega(Some(t), ..) if ast_eq(t, &vp1) => Some(Ast::Num(1)),
                         Ast::Mul(p, k) => match p.as_ref() {
-                            Ast::Omega(Some(t)) if ast_eq(t, &vp1) => Some((**k).clone()),
+                            Ast::Omega(Some(t), ..) if ast_eq(t, &vp1) => Some((**k).clone()),
                             _ => None,
                         },
                         // Ω_{v+1}^e tail (e ≥ 2) folds lowered: +Ω_{v+1}^{e-1}
                         Ast::Pow(p, e) => match p.as_ref() {
-                            Ast::Omega(Some(t))
+                            Ast::Omega(Some(t), ..)
                                 if ast_eq(t, &vp1)
                                     && as_nat(e).map_or(false, |n| n >= 2) =>
                             {
@@ -827,7 +902,7 @@ fn finish_limit_tail(
         } else if let Some((j, y, m)) = as_psi_card_block(b, v, s) {
             // limit-lead: ψ_v-block recurses as a plain factor
             let om_j = Ast::Mul(
-                Box::new(Ast::Omega(Some(Box::new(s.clone())))),
+                Box::new(Ast::Omega(Some(Box::new(s.clone())), None)),
                 Box::new(j),
             );
             let farg = if is_zero_ast(&y) {
@@ -835,7 +910,7 @@ fn finish_limit_tail(
             } else {
                 Ast::Add(Box::new(om_j), Box::new(y))
             };
-            let f = collapse_psi_next_cardinal(v, &farg).unwrap_or_else(|| {
+            let f = collapse_psi_next_cardinal(v, &farg, None).unwrap_or_else(|| {
                 C::Psi(Some(Box::new(vc.clone())), Box::new(conv_at_level(v, &farg)))
             });
             let fc = c_mul(f, conv_ord(&m));
@@ -854,7 +929,7 @@ fn finish_limit_tail(
             } else {
                 Ast::Add(Box::new(om_j), Box::new(y))
             };
-            let f = collapse_psi_next_cardinal(v, &farg).unwrap_or_else(|| {
+            let f = collapse_psi_next_cardinal(v, &farg, None).unwrap_or_else(|| {
                 C::Psi(Some(Box::new(vc.clone())), Box::new(conv_at_level(v, &farg)))
             });
             factors.push(c_mul(f, conv_ord(&m)));
@@ -1099,10 +1174,10 @@ fn sigma(k: &Ast) -> C {
 /// True if b < Ω_idx (conservative ordinal comparison for fold rules).
 fn below_omega_idx(idx: &Ast, b: &Ast) -> bool {
     match b {
-        Ast::Num(_) | Ast::W | Ast::Psi(None, _) => true,
-        Ast::Omega(None) => sub_ord_lt(&Ast::Num(1), idx),
-        Ast::Omega(Some(t)) => sub_ord_lt(t, idx),
-        Ast::Psi(Some(u), _) => sub_ord_lt(u, idx),
+        Ast::Num(_) | Ast::W | Ast::Psi(None, _, ..) => true,
+        Ast::Omega(None, ..) => sub_ord_lt(&Ast::Num(1), idx),
+        Ast::Omega(Some(t), ..) => sub_ord_lt(t, idx),
+        Ast::Psi(Some(u), _, ..) => sub_ord_lt(u, idx),
         Ast::Pow(base, _) => below_omega_idx(idx, base),
         Ast::Mul(l, r) => below_omega_idx(idx, l) && below_omega_idx(idx, r),
         Ast::Add(l, r) => below_omega_idx(idx, l) && below_omega_idx(idx, r),
@@ -1254,9 +1329,9 @@ fn as_psi_omega_block(b: &Ast) -> Option<(Ast, Ast)> {
         _ => (b.clone(), Ast::Num(1)),
     };
     match &inner {
-        Ast::Psi(None, arg) => match arg.as_ref() {
-            Ast::Omega(None) => Some((Ast::Num(0), m)),
-            Ast::Add(l, r) if matches!(l.as_ref(), Ast::Omega(None)) => Some(((**r).clone(), m)),
+        Ast::Psi(None, arg, ..) => match arg.as_ref() {
+            Ast::Omega(None, ..) => Some((Ast::Num(0), m)),
+            Ast::Add(l, r) if matches!(l.as_ref(), Ast::Omega(None, ..)) => Some(((**r).clone(), m)),
             _ => None,
         },
         _ => None,
@@ -1270,13 +1345,13 @@ fn g_contrib(y: &Ast, m: &Ast) -> C {
         // ψ(Ω)·m → ψ(0)·m
         return c_mul(psi0_c(), mv);
     }
-    if let Ast::Psi(None, inner) = y {
-        if let Ast::Omega(None) = inner.as_ref() {
+    if let Ast::Psi(None, inner, ..) = y {
+        if let Ast::Omega(None, ..) = inner.as_ref() {
             // ψ(Ω+ψ(Ω))·m → ψ(0)·m
             return c_mul(psi0_c(), mv);
         }
         if let Ast::Add(l, r) = inner.as_ref() {
-            if matches!(l.as_ref(), Ast::Omega(None)) {
+            if matches!(l.as_ref(), Ast::Omega(None, ..)) {
                 // y = ψ(Ω+z): F₃(z)·m = ψ(0)^{M(z)}·(z==1?ω:1)·m
                 let z = &**r;
                 let p = C::Pow(Box::new(psi0_c()), Box::new(conv_ord(z)));
@@ -1379,9 +1454,9 @@ fn collapse_omegapow_finite(n: i32, mult: &Ast, tail: &Ast) -> C {
 /// For a pure ψ(Ω^e) block (e ≥ 2), the k≥2 addend is the un-wrapped
 /// collapse argument ψ(Ω^{e-1} + ψ(Ω^{e-1})).
 fn raw_arg_for(b: &Ast) -> Option<C> {
-    if let Ast::Psi(None, arg) = b {
+    if let Ast::Psi(None, arg, ..) = b {
         if let Ast::Pow(bb, e) = arg.as_ref() {
-            if matches!(bb.as_ref(), Ast::Omega(None)) {
+            if matches!(bb.as_ref(), Ast::Omega(None, ..)) {
                 if let Some(ev) = as_nat(e) {
                     if ev >= 2 {
                         let inner = make_omegapow(&c_nat(ev - 1));
@@ -1422,12 +1497,12 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
         }
         let psi_pred = match b {
             Ast::Mul(p, k) => match p.as_ref() {
-                Ast::Psi(Some(sub), arg) if ast_eq(sub, &pred) => {
+                Ast::Psi(Some(sub), arg, ..) if ast_eq(sub, &pred) => {
                     Some(((**arg).clone(), (**k).clone()))
                 }
                 _ => None,
             },
-            Ast::Psi(Some(sub), arg) if ast_eq(sub, &pred) => {
+            Ast::Psi(Some(sub), arg, ..) if ast_eq(sub, &pred) => {
                 Some(((**arg).clone(), Ast::Num(1)))
             }
             _ => None,
@@ -1437,7 +1512,7 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
             // lowering and peel all apply):
             // ψ_1(Ω_2) → ψ_1(0), ψ_1(Ω_2²+Ω_2) → ψ_1(Ω_2+1),
             // ψ_ω(Ω_{ω+1}²+1) → ψ_ω(Ω_{ω+1})·ω.
-            let xc = conv_psi(Some(&pred), &parg);
+            let xc = conv_psi(Some(&pred), &parg, None);
             if matches!(pm, Ast::Num(1)) {
                 x_c.push(xc);
             } else {
@@ -1488,7 +1563,11 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
             let sub_idx = if ast_eq(&g_s, s) { pred.clone() } else { pred_ord(&g_s) };
             let shift_s = if ast_eq(&g_s, s) { s.clone() } else { g_s.clone() };
             let mut outer: Vec<C> = Vec::new();
+            // The ψ_{s'-1} argument accumulates the lead plus all previously
+            // collapsed tail terms (ψ(Ω_3^2+Ω_3+Ω_2) →
+            // ψ(Ω_3+ψ_2(Ω_3+1)+ψ_1(Ω_3+ψ_2(Ω_3+1)+1))).
             let mut arg_parts: Vec<C> = vec![lead.clone()];
+            arg_parts.extend(x_c.iter().cloned());
             let mut has_bare = false;
             for (m, is_pow) in &mults {
                 // A power block lowers into the outer argument and also joins
@@ -1505,9 +1584,9 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
                 }
                 has_bare = true;
                 let is_psi_pred_factor = match m {
-                    Ast::Psi(Some(sub), _) => ast_eq(sub, &sub_idx),
+                    Ast::Psi(Some(sub), _, ..) => ast_eq(sub, &sub_idx),
                     Ast::Mul(p, _) => matches!(p.as_ref(),
-                        Ast::Psi(Some(sub), _) if ast_eq(sub, &sub_idx)),
+                        Ast::Psi(Some(sub), _, ..) if ast_eq(sub, &sub_idx)),
                     _ => false,
                 };
                 let xc = if is_psi_pred_factor {
@@ -1546,7 +1625,7 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
 /// (finite e ≥ 2), recursing through products, sums and ψ-arguments.
 fn card_arg_shift(s: &Ast, a: &Ast) -> Ast {
     match a {
-        Ast::Pow(b, e) if matches!(b.as_ref(), Ast::Omega(Some(x)) if ast_eq(x, s)) => {
+        Ast::Pow(b, e) if matches!(b.as_ref(), Ast::Omega(Some(x), ..) if ast_eq(x, s)) => {
             if let Some(n) = as_nat(e) {
                 if n >= 2 {
                     Ast::Pow(b.clone(), Box::new(Ast::Num(n - 1)))
@@ -1557,7 +1636,7 @@ fn card_arg_shift(s: &Ast, a: &Ast) -> Ast {
                 a.clone()
             }
         }
-        Ast::Psi(sub, arg) => Ast::Psi(sub.clone(), Box::new(card_arg_shift(s, arg))),
+        Ast::Psi(sub, arg, ..) => Ast::Psi(sub.clone(), Box::new(card_arg_shift(s, arg)), None),
         Ast::Mul(l, r) => Ast::Mul(
             Box::new(card_arg_shift(s, l)),
             Box::new(card_arg_shift(s, r)),
@@ -1695,7 +1774,7 @@ fn as_psi_card_block(b: &Ast, v_ast: &Ast, s_ast: &Ast) -> Option<(Ast, Ast, Ast
         _ => (b.clone(), Ast::Num(1)),
     };
     match &inner {
-        Ast::Psi(Some(sub), arg) if ast_eq(sub, v_ast) => {
+        Ast::Psi(Some(sub), arg, ..) if ast_eq(sub, v_ast) => {
             let mut ablocks = Vec::new();
             flatten_add(arg, &mut ablocks);
             if ablocks.is_empty() {
@@ -1722,7 +1801,7 @@ fn as_psi_cardpow_block(b: &Ast, v_ast: &Ast, s_ast: &Ast) -> Option<(Ast, Ast, 
         _ => (b.clone(), Ast::Num(1)),
     };
     match &inner {
-        Ast::Psi(Some(sub), arg) if ast_eq(sub, v_ast) => {
+        Ast::Psi(Some(sub), arg, ..) if ast_eq(sub, v_ast) => {
             let mut ablocks = Vec::new();
             flatten_add(arg, &mut ablocks);
             if ablocks.is_empty() {
@@ -1732,7 +1811,7 @@ fn as_psi_cardpow_block(b: &Ast, v_ast: &Ast, s_ast: &Ast) -> Option<(Ast, Ast, 
             match h {
                 Some(Head::CardinalPow(s2, e)) if ast_eq(&s2, s_ast) => {
                     let lead = Ast::Pow(
-                        Box::new(Ast::Omega(Some(Box::new(s2)))),
+                        Box::new(Ast::Omega(Some(Box::new(s2)), None)),
                         Box::new(e),
                     );
                     Some((lead, j, sum_of(&ablocks[1..]), m))
@@ -1783,10 +1862,10 @@ fn e_val_level(v_ast: &Ast, s_ast: &Ast, y: &Ast) -> C {
 /// ψ_v(0) inside ψ-arguments, everything else converts as a value.
 fn conv_struct_level(v_ast: &Ast, s_ast: &Ast, y: &Ast) -> C {
     match y {
-        Ast::Omega(Some(x)) if ast_eq(x, s_ast) => {
+        Ast::Omega(Some(x), ..) if ast_eq(x, s_ast) => {
             C::Psi(Some(Box::new(conv_ord(v_ast))), Box::new(C::Zero))
         }
-        Ast::Psi(sub, arg) => C::Psi(
+        Ast::Psi(sub, arg, ..) => C::Psi(
             sub.as_ref().map(|t| Box::new(conv_ord(t))),
             Box::new(conv_struct_level(v_ast, s_ast, arg)),
         ),
@@ -1824,13 +1903,13 @@ fn is_below_c(c: &C) -> bool {
 /// Ω_{u+1}·ψ_u(X) → ψ_u(T(X) + ψ_u(T(X))) (rows 1108-style tails).
 fn collapse_card_mul_psi(b: &Ast) -> Option<C> {
     if let Ast::Mul(p, k) = b {
-        if let Ast::Omega(Some(idx)) = p.as_ref() {
+        if let Ast::Omega(Some(idx), ..) = p.as_ref() {
             if is_successor_ord(idx) {
                 let u = pred_ord(idx);
-                if let Ast::Psi(Some(sub), x) = k.as_ref() {
+                if let Ast::Psi(Some(sub), x, ..) = k.as_ref() {
                     if ast_eq(sub, &u) {
                         let tx = translate_down(x);
-                        let inner = conv_psi(Some(&u), &tx);
+                        let inner = conv_psi(Some(&u), &tx, None);
                         let argc = conv_ord(&tx);
                         return Some(C::Psi(
                             Some(Box::new(conv_ord(&u))),
@@ -1991,9 +2070,9 @@ fn collapse_fixed_cardinal(s: &Ast, mult: &Ast, tail: &Ast) -> C {
         // ψ_s(x) tail (same subscript as the limit lead):
         // → ψ_s(T(lead))·ω^x when x < Ω_s; ψ_s(lead + F(x)) otherwise.
         let psi_tail = match b {
-            Ast::Psi(Some(u), x) if ast_eq(u, s) => Some(((**x).clone(), None)),
+            Ast::Psi(Some(u), x, ..) if ast_eq(u, s) => Some(((**x).clone(), None)),
             Ast::Pow(p, e) => match p.as_ref() {
-                Ast::Psi(Some(u), x) if ast_eq(u, s) => Some(((**x).clone(), Some((**e).clone()))),
+                Ast::Psi(Some(u), x, ..) if ast_eq(u, s) => Some(((**x).clone(), Some((**e).clone()))),
                 _ => None,
             },
             _ => None,
@@ -2097,15 +2176,15 @@ fn collapse_fixed_cardinal(s: &Ast, mult: &Ast, tail: &Ast) -> C {
 /// arguments stay symbolic (rows 187, 233, 278, 310, 358-362).
 fn conv_sym(a: &Ast) -> C {
     match a {
-        Ast::Psi(None, arg)
+        Ast::Psi(None, arg, ..)
             if !matches!(arg.as_ref(), Ast::Num(0)) && is_below_omega1(arg) =>
         {
             conv_psi0(arg)
         }
         Ast::Num(k) => c_nat(*k),
         Ast::W => c_omega(),
-        Ast::Omega(None) => C::Omega,
-        Ast::Omega(Some(s)) => C::OmegaSub(Box::new(conv_sym(s))),
+        Ast::Omega(None, ..) => C::Omega,
+        Ast::Omega(Some(s), ..) => C::OmegaSub(Box::new(conv_sym(s))),
         Ast::Add(_, _) => {
             let mut blocks = Vec::new();
             flatten_add(a, &mut blocks);
@@ -2113,7 +2192,7 @@ fn conv_sym(a: &Ast) -> C {
         }
         Ast::Mul(l, r) => c_mul(conv_sym(l), conv_sym(r)),
         Ast::Pow(b, e) => C::Pow(Box::new(conv_sym(b)), Box::new(conv_sym(e))),
-        Ast::Psi(sub, arg) => C::Psi(
+        Ast::Psi(sub, arg, ..) => C::Psi(
             sub.as_ref().map(|s| Box::new(conv_sym(s))),
             Box::new(conv_sym(arg)),
         ),
@@ -2121,7 +2200,27 @@ fn conv_sym(a: &Ast) -> C {
 }
 
 fn ast_eq(a: &Ast, b: &Ast) -> bool {
-    format!("{:?}", a) == format!("{:?}", b)
+    match (a, b) {
+        (Ast::Num(x), Ast::Num(y)) => x == y,
+        (Ast::W, Ast::W) => true,
+        (Ast::Omega(sa, _), Ast::Omega(sb, _)) => match (sa, sb) {
+            (None, None) => true,
+            (Some(x), Some(y)) => ast_eq(x, y),
+            _ => false,
+        },
+        (Ast::Psi(sa, aa, _), Ast::Psi(sb, ab, _)) => {
+            let se = match (sa, sb) {
+                (None, None) => true,
+                (Some(x), Some(y)) => ast_eq(x, y),
+                _ => false,
+            };
+            se && ast_eq(aa, ab)
+        }
+        (Ast::Add(l1, r1), Ast::Add(l2, r2))
+        | (Ast::Mul(l1, r1), Ast::Mul(l2, r2))
+        | (Ast::Pow(l1, r1), Ast::Pow(l2, r2)) => ast_eq(l1, l2) && ast_eq(r1, r2),
+        _ => false,
+    }
 }
 
 /// Deep translation inside a fixed-point argument: a bare trailing Ω becomes
@@ -2129,13 +2228,13 @@ fn ast_eq(a: &Ast, b: &Ast) -> bool {
 fn translate_deep(a: &Ast, _f: &Ast) -> Ast {
     match a {
         Ast::Add(l, r) => {
-            if matches!(r.as_ref(), Ast::Omega(None)) {
+            if matches!(r.as_ref(), Ast::Omega(None, ..)) {
                 Ast::Add(l.clone(), Box::new(Ast::Num(1)))
             } else {
                 Ast::Add(l.clone(), Box::new(translate_deep(r, _f)))
             }
         }
-        Ast::Psi(sub, arg) => Ast::Psi(sub.clone(), Box::new(translate_deep(arg, _f))),
+        Ast::Psi(sub, arg, ..) => Ast::Psi(sub.clone(), Box::new(translate_deep(arg, _f)), None),
         Ast::Mul(l, r) => Ast::Mul(Box::new(translate_deep(l, _f)), r.clone()),
         Ast::Pow(b, e) => Ast::Pow(b.clone(), Box::new(translate_deep(e, _f))),
         _ => a.clone(),
@@ -2157,7 +2256,7 @@ fn exp_shift(a: &Ast) -> Ast {
             let mut blocks = Vec::new();
             flatten_add(a, &mut blocks);
             let last = blocks.last().unwrap();
-            let shifted = matches!(last, Ast::Omega(None)) && is_fixed_block(&blocks[0]);
+            let shifted = matches!(last, Ast::Omega(None, ..)) && is_fixed_block(&blocks[0]);
             let mut out: Vec<Ast> = blocks.clone();
             if shifted {
                 let n = out.len();
@@ -2165,7 +2264,7 @@ fn exp_shift(a: &Ast) -> Ast {
             }
             sum_of(&out)
         }
-        Ast::Pow(b, e) if matches!(b.as_ref(), Ast::Omega(None)) => {
+        Ast::Pow(b, e) if matches!(b.as_ref(), Ast::Omega(None, ..)) => {
             Ast::Pow(b.clone(), Box::new(exp_shift(e)))
         }
         _ => a.clone(),
@@ -2176,7 +2275,7 @@ fn exp_shift(a: &Ast) -> Ast {
 /// evaluated (rows 196-203); anything else is kept symbolically, with a
 /// trailing bare Ω absorbed to 1 behind a fixed-point head (row 323).
 fn conv_exp(e: &Ast) -> C {
-    if let Ast::Psi(None, arg) = e {
+    if let Ast::Psi(None, arg, ..) = e {
         if !matches!(arg.as_ref(), Ast::Num(0)) {
             return conv_psi0(arg);
         }
@@ -2190,16 +2289,16 @@ fn translate_fixed_tail(ee: &Ast, f: &Ast) -> Ast {
         return if n <= 1 {
             Ast::Num(1)
         } else {
-            Ast::Pow(Box::new(Ast::Omega(None)), Box::new(Ast::Num(n - 1)))
+            Ast::Pow(Box::new(Ast::Omega(None, None)), Box::new(Ast::Num(n - 1)))
         };
     }
-    Ast::Pow(Box::new(Ast::Omega(None)), Box::new(translate_deep(ee, f)))
+    Ast::Pow(Box::new(Ast::Omega(None, None)), Box::new(translate_deep(ee, f)))
 }
 
 /// ψ₀(Ω^λ·k + r) with λ a limit: the argument is kept symbolically; tails
 /// Ω^e shift down one level and Ω^{ψ(F)} collapses to ψ(F).
 fn collapse_fixed_omegapow(e: &Ast, mult: &Ast, tail: &Ast) -> C {
-    let f_ast = Ast::Pow(Box::new(Ast::Omega(None)), Box::new(e.clone()));
+    let f_ast = Ast::Pow(Box::new(Ast::Omega(None, None)), Box::new(e.clone()));
     let lead0 = C::Pow(Box::new(C::Omega), Box::new(conv_exp(e)));
     let lead = c_mul(lead0, conv_sym(mult));
     let mut blocks = Vec::new();
@@ -2215,7 +2314,7 @@ fn collapse_fixed_omegapow(e: &Ast, mult: &Ast, tail: &Ast) -> C {
         let m_one = matches!(m, Ast::Num(1));
         match h {
             Some(Head::OmegaPow(ee)) => {
-                let is_psi_f = matches!(ee, Ast::Psi(None, ref inner) if ast_eq(inner.as_ref(), &f_ast));
+                let is_psi_f = matches!(ee, Ast::Psi(None, ref inner, ..) if ast_eq(inner.as_ref(), &f_ast));
                 if is_psi_f {
                     x_parts.push(b.clone());
                 } else {
@@ -2990,7 +3089,7 @@ mod tests {
         let rt = term_to_ast(&s);
         println!("PROBE parsed = {:?}", ast);
         println!("PROBE roundtrip = {:?}", rt);
-        if let Ast::Psi(Some(v), arg) = &rt {
+        if let Ast::Psi(Some(v), arg, ..) = &rt {
             println!("PROBE v = {:?}", v);
             let mut blocks = Vec::new();
             flatten_add(arg, &mut blocks);
@@ -3530,15 +3629,23 @@ mod tests {
         // A lone power tail lowers into the outer argument only, with no ψ
         // term (ψ(Ω_2^3+Ω_2^2) → ψ(Ω_2^2+Ω_2)).
         assert_eq!(conv("ψ(Ω_2^3+Ω_2^2)"), "\\psi(\\Omega_{2}^{2} + \\Omega_{2})");
+        // A lower-subscript tail nests the previously collapsed ψ term into
+        // its argument (ψ(Ω_3^2+Ω_3+Ω_2) →
+        // ψ(Ω_3+ψ_2(Ω_3+1)+ψ_1(Ω_3+ψ_2(Ω_3+1)+1))).
+        assert_eq!(
+            conv("ψ(Ω_3^2+Ω_3+Ω_2)"),
+            "\\psi(\\Omega_{3} + \\psi_{2}(\\Omega_{3} + 1) + \\psi_{1}(\\Omega_{3} + \\psi_{2}(\\Omega_{3} + 1) + 1))"
+        );
         // An above-collapse-cardinal tail Ω_{s'} (s' > v+1) collapses to
-        // ψ_{s'-1}(Ω_s + m) (ψ_1(Ω_4+Ω_3) → ψ_1(ψ_3(0)+ψ_2(Ω_4+1))).
+        // ψ_{s'-1}(collapsed_lead + m), where collapsed_lead = ψ_{s-1}(σ)
+        // (ψ_1(Ω_4+Ω_3) → ψ_1(ψ_3(0)+ψ_2(ψ_3(0)+1))).
         assert_eq!(
             conv("ψ_1(Ω_4+Ω_3)"),
-            "\\psi_{1}(\\psi_{3}(0) + \\psi_{2}(\\Omega_{4} + 1))"
+            "\\psi_{1}(\\psi_{3}(0) + \\psi_{2}(\\psi_{3}(0) + 1))"
         );
         assert_eq!(
             conv("ψ_1(Ω_4+Ω_3×2)"),
-            "\\psi_{1}(\\psi_{3}(0) + \\psi_{2}(\\Omega_{4} + 2))"
+            "\\psi_{1}(\\psi_{3}(0) + \\psi_{2}(\\psi_{3}(0) + 2))"
         );
         // Row 380 corrected: a same-base bare cardinal tail under a
         // limit-exponent lead collapses to ψ_{s-1}(lead + 1).
@@ -3554,6 +3661,14 @@ mod tests {
         // while the λ·k lead itself stays (ψ(Ω_{ω×2}) row 864).
         assert_eq!(conv("ψ_ω(Ω_(ω×2+1))"), "\\psi_{\\omega}(\\psi_{\\omega2}(0))");
         assert_eq!(conv("ψ_ω(Ω_(ω×2))"), "\\psi_{\\omega}(\\Omega_{\\omega2})");
+        assert_eq!(conv("ψ_ω(Ω_(ω^2+1))"), "\\psi_{\\omega}(\\psi_{\\omega^{2}}(0))");
+        assert_eq!(conv("ψ_ω(Ω_(ω^2))"), "\\psi_{\\omega}(\\Omega_{\\omega^{2}})");
+        // Term-layer comparison: ψ_4(Ω_5) > Ω_4 holds by value, not by
+        // structural subscript comparison, so the lead collapses.
+        assert_eq!(
+            conv("ψ_Ω_4(Ω_(ψ_4(Ω_5)+1))"),
+            "\\psi_{\\Omega_{4}}(\\psi_{\\psi_{4}(0)}(0))"
+        );
         // Row 383 corrected: a ψ inside a cardinal-power tail exponent is
         // collapsed, not kept symbolic.
         assert_eq!(

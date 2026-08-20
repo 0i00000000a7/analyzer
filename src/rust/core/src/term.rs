@@ -9,6 +9,7 @@ static TERM_ID: AtomicUsize = AtomicUsize::new(1);
 /// ψ_a(b) + c. `None` represents zero.
 pub type Term = Option<Rc<TermNode>>;
 
+#[derive(Debug)]
 pub struct TermNode {
     /// Stable identity for render caching. Unlike the Rc address, this is
     /// never reused by a different term, so cache entries cannot be

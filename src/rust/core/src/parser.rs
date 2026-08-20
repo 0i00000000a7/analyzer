@@ -14,8 +14,11 @@ use crate::Matrix;
 pub enum Ast {
     Num(i32),
     W,
-    Omega(Option<Box<Ast>>),
-    Psi(Option<Box<Ast>>, Box<Ast>),
+    /// The optional second field stores the original BOCF subscript term
+    /// (for term-layer comparison; None when unavailable).
+    Omega(Option<Box<Ast>>, Option<Term>),
+    /// The optional third field stores the original BOCF subscript term.
+    Psi(Option<Box<Ast>>, Box<Ast>, Option<Term>),
     Add(Box<Ast>, Box<Ast>),
     Mul(Box<Ast>, Box<Ast>),
     Pow(Box<Ast>, Box<Ast>),
@@ -252,7 +255,8 @@ impl<'a> Parser<'a> {
                     self.tok = self.lexer.next()?;
                     sub = Some(Box::new(self.parse_primary()?));
                 }
-                let node = Ast::Omega(sub);
+                let st = sub.as_ref().and_then(|s| eval_ast(s).ok());
+                let node = Ast::Omega(sub, st);
                 // Ω2 ≡ Ω×2: a bare number right after Ω is a multiplier.
                 if let TokenKind::Num = self.tok.kind {
                     let n = self.tok.num_value;
@@ -300,9 +304,10 @@ impl<'a> Parser<'a> {
                         self.tok = self.lexer.next()?;
                         let arg = self.parse_expr()?;
                         self.expect_close(open2)?;
-                        return Ok(Ast::Psi(Some(Box::new(first)), Box::new(arg)));
+                        let st = eval_ast(&first).ok();
+                        return Ok(Ast::Psi(Some(Box::new(first)), Box::new(arg), st));
                     }
-                    return Ok(Ast::Psi(None, Box::new(first)));
+                    return Ok(Ast::Psi(None, Box::new(first), None));
                 }
                 let open_kind = self.tok.kind;
                 if open_kind == TokenKind::LBrace {
@@ -316,7 +321,8 @@ impl<'a> Parser<'a> {
                 } else {
                     self.expect(TokenKind::RParen)?;
                 }
-                Ok(Ast::Psi(sub, Box::new(arg)))
+                let st = sub.as_ref().and_then(|s| eval_ast(s).ok());
+                Ok(Ast::Psi(sub, Box::new(arg), st))
             }
             TokenKind::LParen | TokenKind::LBrace => {
                 let open_kind = self.tok.kind;
@@ -395,11 +401,11 @@ pub fn print_ast(node: &Ast, indent: &str) -> String {
     match node {
         Ast::Num(n) => format!("{}num {}", indent, n),
         Ast::W => format!("{}ω", indent),
-        Ast::Omega(sub) => match sub {
+        Ast::Omega(sub, ..) => match sub {
             Some(s) => join("Ω", vec![("sub", Some(s))]),
             None => format!("{}Ω", indent),
         },
-        Ast::Psi(sub, arg) => join("ψ", vec![("sub", sub.as_deref()), ("arg", Some(arg))]),
+        Ast::Psi(sub, arg, ..) => join("ψ", vec![("sub", sub.as_deref()), ("arg", Some(arg))]),
         Ast::Add(l, r) => join("+", vec![("left", Some(l)), ("right", Some(r))]),
         Ast::Mul(l, r) => join("×", vec![("left", Some(l)), ("right", Some(r))]),
         Ast::Pow(b, e) => join("^", vec![("base", Some(b)), ("exp", Some(e))]),
@@ -421,14 +427,14 @@ fn eval_node(node: &Ast) -> Result<Term, String> {
             Ok(r)
         }
         Ast::W => Ok(omega()),
-        Ast::Omega(sub) => match sub {
+        Ast::Omega(sub, ..) => match sub {
             None => Ok(omega1()),
             Some(s) => {
                 let sub = eval_node(s)?;
                 Ok(t(sub, zero(), zero()))
             }
         },
-        Ast::Psi(sub, arg) => {
+        Ast::Psi(sub, arg, ..) => {
             let sub_term = match sub {
                 Some(s) => eval_node(s)?,
                 None => zero(),
@@ -515,14 +521,14 @@ pub fn eval_raw_ast(ast: &Ast) -> Result<Term, String> {
             Ok(r)
         }
         Ast::W => Ok(omega()),
-        Ast::Omega(sub) => match sub {
+        Ast::Omega(sub, ..) => match sub {
             None => Ok(omega1()),
             Some(s) => {
                 let sub = eval_raw_ast(s)?;
                 Ok(t(sub, zero(), zero()))
             }
         },
-        Ast::Psi(sub, arg) => {
+        Ast::Psi(sub, arg, ..) => {
             let sub_term = match sub {
                 Some(s) => eval_raw_ast(s)?,
                 None => zero(),
@@ -554,8 +560,8 @@ pub fn eval_raw_ast(ast: &Ast) -> Result<Term, String> {
 fn has_ascending_add(ast: &Ast) -> bool {
     match ast {
         Ast::Num(_) | Ast::W => false,
-        Ast::Omega(sub) => sub.as_ref().map_or(false, |s| has_ascending_add(s)),
-        Ast::Psi(sub, arg) => {
+        Ast::Omega(sub, ..) => sub.as_ref().map_or(false, |s| has_ascending_add(s)),
+        Ast::Psi(sub, arg, ..) => {
             sub.as_ref().map_or(false, |s| has_ascending_add(s)) || has_ascending_add(arg)
         }
         Ast::Add(l, r) => {

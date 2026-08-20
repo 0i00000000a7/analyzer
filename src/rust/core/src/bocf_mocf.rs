@@ -1373,8 +1373,9 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
         let (h, m) = split_head_mult(b);
         match &h {
             Some(Head::Cardinal(s2)) if ast_eq(s2, s) => {
-                // Ω_s·X → ψ_{s-1}(Ω_s + M(X)); a ψ_{pred} factor X fully
-                // collapses (ψ_1(Ω_2) → ψ_1(0)).
+                // Ω_s·X → ψ_{s-1}(lead + M(X)) (lead = lowered lead
+                // Ω_s^{n-1}); a ψ_{pred} factor X fully collapses
+                // (ψ_1(Ω_2) → ψ_1(0)).
                 let is_psi_pred_factor = match &m {
                     Ast::Psi(Some(sub), _) => ast_eq(sub, &pred),
                     Ast::Mul(p, _) => matches!(p.as_ref(), Ast::Psi(Some(sub), _) if ast_eq(sub, &pred)),
@@ -1387,7 +1388,7 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
                 };
                 x_c.push(C::Psi(
                     Some(Box::new(conv_ord(&pred))),
-                    Box::new(c_sum(vec![C::OmegaSub(Box::new(conv_ord(s))), xc])),
+                    Box::new(c_sum(vec![lead.clone(), xc])),
                 ));
             }
             Some(Head::Cardinal(s2)) if is_successor_ord(s2) => {
@@ -3302,6 +3303,10 @@ mod tests {
         assert_eq!(conv("ψ(Ω_4^2+Ω_3)"), "\\psi(\\Omega_{4} + \\psi_{2}(\\Omega_{4} + 1))");
         assert_eq!(conv("ψ_1(Ω_4^2+Ω_3×2)"), "\\psi_{1}(\\Omega_{4} + \\psi_{2}(\\Omega_{4} + 2))");
         assert_eq!(conv("ψ(Ω_4^2+Ω_3×2)"), "\\psi(\\Omega_{4} + \\psi_{2}(\\Omega_{4} + 2))");
+        // Exponent ≥ 3: the Ω_s tail uses the lowered lead Ω_s^{n-1}
+        // (ψ(Ω_2^3+Ω_2) → ψ(Ω_2^2+ψ_1(Ω_2^2+1))).
+        assert_eq!(conv("ψ(Ω_2^3+Ω_2)"), "\\psi(\\Omega_{2}^{2} + \\psi_{1}(\\Omega_{2}^{2} + 1))");
+        assert_eq!(conv("ψ(Ω_2^3+Ω_2×2)"), "\\psi(\\Omega_{2}^{2} + \\psi_{1}(\\Omega_{2}^{2} + 2))");
         // is_above lead with an Ω_{v+1} tail folds to +k
         // (ψ_1(Ω_3+Ω_2) → ψ_1(ψ_2(0)+1)).
         assert_eq!(conv("ψ_1(Ω_3+Ω_2)"), "\\psi_{1}(\\psi_{2}(0) + 1)");

@@ -236,7 +236,14 @@ impl<'a> Parser<'a> {
             }
             TokenKind::OmegaLower => {
                 self.tok = self.lexer.next()?;
-                Ok(Ast::W)
+                let node = Ast::W;
+                // ω2 ≡ ω×2: a bare number right after ω is a multiplier.
+                if let TokenKind::Num = self.tok.kind {
+                    let n = self.tok.num_value;
+                    self.tok = self.lexer.next()?;
+                    return Ok(Ast::Mul(Box::new(node), Box::new(Ast::Num(n))));
+                }
+                Ok(node)
             }
             TokenKind::Omega => {
                 self.tok = self.lexer.next()?;
@@ -245,7 +252,14 @@ impl<'a> Parser<'a> {
                     self.tok = self.lexer.next()?;
                     sub = Some(Box::new(self.parse_primary()?));
                 }
-                Ok(Ast::Omega(sub))
+                let node = Ast::Omega(sub);
+                // Ω2 ≡ Ω×2: a bare number right after Ω is a multiplier.
+                if let TokenKind::Num = self.tok.kind {
+                    let n = self.tok.num_value;
+                    self.tok = self.lexer.next()?;
+                    return Ok(Ast::Mul(Box::new(node), Box::new(Ast::Num(n))));
+                }
+                Ok(node)
             }
             TokenKind::Psi => {
                 self.tok = self.lexer.next()?;

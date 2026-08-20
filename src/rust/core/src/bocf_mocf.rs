@@ -115,6 +115,12 @@ fn sub_ord_lt(a: &Ast, b: &Ast) -> bool {
         (Ast::Psi(Some(u), _), Ast::Omega(Some(y))) => sub_ord_lt(u, y),
         (Ast::Psi(Some(_), _), Ast::Add(l, _)) => sub_ord_leq(a, l),
         (Ast::Add(l, _), _) => sub_ord_lt(l, b),
+        // Two multiples of the same leading term compare by multiplier
+        // (ω×2 < ω×3 ⟺ 2 < 3).
+        (Ast::Mul(l1, r1), Ast::Mul(l2, r2)) if ast_eq(l1, l2) => sub_ord_lt(r1, r2),
+        // a < l·r (a limit-multiple) reduces to a ≤ l when a is not a
+        // multiple of l with its own multiplier (ω+1 < ω×2 ⟺ ω+1 ≤ ω×2).
+        (_, Ast::Mul(l, _)) => sub_ord_leq(a, l),
         (Ast::Mul(l, _), _) => sub_ord_lt(l, b),
         (Ast::Pow(base, e1), Ast::Pow(base2, e2)) if ast_eq(base, base2) => sub_ord_lt(e1, e2),
         (Ast::Pow(base, _), _) => sub_ord_lt(base, b),
@@ -1875,10 +1881,14 @@ fn collapse_fixed_kind(lead: C, mult: &Ast, tail: &Ast, limit_card_pow: bool) ->
             Ast::Mul(p, _) if matches!(p.as_ref(), Ast::Psi(..)) => true,
             _ => false,
         };
-        x_c.push(if is_psi_block {
-            conv_ord(b)
+        let tb = translate_down(b);
+        // A ψ anywhere in the block (e.g. inside a cardinal-power exponent,
+        // Ω_2^{ψ_1(Ω_2)}) is collapsed, not kept symbolic:
+        // ψ(Ω_2^Ω_2+Ω_2^{ψ_1(Ω_2)}) → ψ(Ω_2^Ω_2+Ω_2^{ψ_1(0)}).
+        x_c.push(if is_psi_block || contains_psi_ast(b) {
+            conv_ord(&tb)
         } else {
-            conv_sym(&translate_down(b))
+            conv_sym(&tb)
         });
     }
     let arg = if x_c.is_empty() {
@@ -3011,6 +3021,11 @@ mod tests {
         assert_eq!(conv("ψ(1)(Ω_2)"), conv("ψ_1(Ω_2)"));
         // A single group is still the argument.
         assert_eq!(conv("ψ(ω+1)"), conv("ψ(ω+1)"));
+        // Ω2 ≡ Ω×2, ω2 ≡ ω×2: a bare number after Ω/ω is a multiplier.
+        assert_eq!(conv("ψ(Ω2)"), conv("ψ(Ω×2)"));
+        assert_eq!(conv("ψ(ω2)"), conv("ψ(ω×2)"));
+        assert_eq!(conv("ψ(Ω_2^2+Ω2)"), conv("ψ(Ω_2^2+Ω×2)"));
+        assert_eq!(conv("ψ(W2)"), conv("ψ(Ω×2)"));
     }
 
     #[test]
@@ -3534,6 +3549,17 @@ mod tests {
         // Limit level v=ω: an above-collapse-cardinal finite-exponent lead
         // still lowers its exponent (is_above must hold for limit v).
         assert_eq!(conv("ψ_ω(Ω_(ω+2)^2)"), "\\psi_{\\omega}(\\Omega_{\\omega + 2})");
+        // Limit-multiple subscripts compare correctly above the collapse
+        // cardinal at limit levels (ψ_ω(Ω_{ω×2+1}) → ψ_ω(ψ_{ω×2}(0))),
+        // while the λ·k lead itself stays (ψ(Ω_{ω×2}) row 864).
+        assert_eq!(conv("ψ_ω(Ω_(ω×2+1))"), "\\psi_{\\omega}(\\psi_{\\omega2}(0))");
+        assert_eq!(conv("ψ_ω(Ω_(ω×2))"), "\\psi_{\\omega}(\\Omega_{\\omega2})");
+        // Row 383 corrected: a ψ inside a cardinal-power tail exponent is
+        // collapsed, not kept symbolic.
+        assert_eq!(
+            conv("ψ(Ω_2^Ω_2+Ω_2^ψ_1(Ω_2))"),
+            "\\psi(\\Omega_{2}^{\\Omega_{2}} + \\Omega_{2}^{\\psi_{1}(0)})"
+        );
     }
 }
 

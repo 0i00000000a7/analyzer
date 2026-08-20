@@ -377,7 +377,7 @@
 "\psi( \Omega_2^{\Omega_2} + \Omega)","\psi(\Omega_2^{\Omega_2} + 1)"
 "\psi( \Omega_2^{\Omega_2} + \psi_1(\Omega_2))","\psi(\Omega_2^{\Omega_2} + \psi_1(0))"
 "\psi( \Omega_2^{\Omega_2} + \psi_1(\Omega_2^{\Omega_2}))","\psi(\Omega_2^{\Omega_2} + \psi_1(\Omega_2^{\Omega_2}))"
-"\psi( \Omega_2^{\Omega_2} + \Omega_2)","\psi(\Omega_2^{\Omega_2} + \Omega_2)"
+"\psi(\Omega_2^{\Omega_2} + \Omega_2)","\psi(\Omega_{2}^{\Omega_{2}} + \psi_{1}(\Omega_{2}^{\Omega_{2}} + 1))"
 "\psi( \Omega_2^{\Omega_2} + \Omega_2^\omega)","\psi(\Omega_2^{\Omega_2} + \Omega_2^\omega)"
 "\psi( \Omega_2^{\Omega_2} + \Omega_2^\Omega)","\psi(\Omega_2^{\Omega_2} + \Omega_2^\Omega)"
 "\psi( \Omega_2^{\Omega_2} + \Omega_2^{\psi_1(\Omega_2)})","\psi(\Omega_2^{\Omega_2} + \Omega_2^{\psi_1(\Omega_2)})"

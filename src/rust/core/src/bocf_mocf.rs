@@ -1161,8 +1161,11 @@ fn conv_psi0(arg: &Ast) -> C {
                     }
                 }
             } else {
-                let lim = !is_successor_ord(&s) && !matches!(&s, Ast::Num(_));
-                collapse_fixed_kind(make_cardinalpow(&conv_ord(&s), &conv_ord(&e)), &mult, &tail, lim)
+                // Limit-exponent lead Ω_s^λ: successor-cardinal tails
+                // Ω_{u+1}·Y collapse to ψ_u(lead + …), including the
+                // same-base tail (ψ(Ω_2^Ω_2+Ω_2) →
+                // ψ(Ω_2^Ω_2+ψ_1(Ω_2^Ω_2+1))).
+                collapse_fixed_kind(make_cardinalpow(&conv_ord(&s), &conv_ord(&e)), &mult, &tail, true)
             }
         }
     }
@@ -3517,6 +3520,12 @@ mod tests {
         assert_eq!(
             conv("ψ_1(Ω_4+Ω_3×2)"),
             "\\psi_{1}(\\psi_{3}(0) + \\psi_{2}(\\Omega_{4} + 2))"
+        );
+        // Row 380 corrected: a same-base bare cardinal tail under a
+        // limit-exponent lead collapses to ψ_{s-1}(lead + 1).
+        assert_eq!(
+            conv("ψ(Ω_2^Ω_2+Ω_2)"),
+            "\\psi(\\Omega_{2}^{\\Omega_{2}} + \\psi_{1}(\\Omega_{2}^{\\Omega_{2}} + 1))"
         );
     }
 }

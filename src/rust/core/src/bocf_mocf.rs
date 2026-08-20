@@ -1738,7 +1738,6 @@ fn collapse_cardinal_succ(s: &Ast, mult: &Ast, tail: &Ast) -> C {
         return if is_zero_ast(&w) { psi } else { c_mul(psi, C::OmegaPow(Box::new(conv_ord(&w)))) };
     }
     let inner = C::Psi(Some(Box::new(vc.clone())), Box::new(sigma(&merged)));
-    let mut x_parts: Vec<Ast> = Vec::new();
     let mut w_parts: Vec<Ast> = Vec::new();
     let mut arg_parts: Vec<C> = vec![inner];
     for b in &blocks {
@@ -1768,15 +1767,14 @@ fn collapse_cardinal_succ(s: &Ast, mult: &Ast, tail: &Ast) -> C {
                     Box::new(c_sum(parts)),
                 ));
             } else {
-                x_parts.push(translate_down(b));
+                // Non-fold cardinal tails (e.g. Ω_2^ω) accumulate in order so
+                // a later succ_fold ψ nests them (ψ(Ω_3+Ω_2^ω+Ω_2) →
+                // ψ(ψ_2(0)+Ω_2^ω+ψ_1(ψ_2(0)+Ω_2^ω+1))).
+                arg_parts.push(conv_ord(&translate_down(b)));
             }
         }
     }
-    let x_c = if x_parts.is_empty() { C::Zero } else { conv_ord(&sum_of(&x_parts)) };
-    let mut parts: Vec<C> = arg_parts;
-    if !is_c_zero(&x_c) {
-        parts.push(x_c);
-    }
+    let parts: Vec<C> = arg_parts;
     let arg = c_sum(parts);
     let psi = C::Psi(None, Box::new(arg));
     let w = sum_of(&w_parts);
@@ -3662,6 +3660,13 @@ mod tests {
         assert_eq!(
             conv("ψ(Ω_3^2+Ω_3+Ω_2)"),
             "\\psi(\\Omega_{3} + \\psi_{2}(\\Omega_{3} + 1) + \\psi_{1}(\\Omega_{3} + \\psi_{2}(\\Omega_{3} + 1) + 1))"
+        );
+        // ψ_0 succ_fold accumulates preceding cardinal tails into the ψ
+        // argument (ψ(Ω_3+Ω_2^ω+Ω_2) →
+        // ψ(ψ_2(0)+Ω_2^ω+ψ_1(ψ_2(0)+Ω_2^ω+1))).
+        assert_eq!(
+            conv("ψ(Ω_3+Ω_2^ω+Ω_2)"),
+            "\\psi(\\psi_{2}(0) + \\Omega_{2}^{\\omega} + \\psi_{1}(\\psi_{2}(0) + \\Omega_{2}^{\\omega} + 1))"
         );
         // An above-collapse-cardinal tail Ω_{s'} (s' > v+1) collapses to
         // ψ_{s'-1}(collapsed_lead + m), where collapsed_lead = ψ_{s-1}(σ)

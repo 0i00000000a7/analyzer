@@ -1248,3 +1248,4 @@
 "\psi_{\omega}(\Omega_{\omega^{2} + 1})","\psi_{\omega}(\psi_{\omega^{2}}(0))"
 "\psi_{\Omega_4}(\Omega_{\psi_4(\Omega_5)+1})","\psi_{\Omega_{4}}(\psi_{\psi_{4}(0)}(0))"
 "\psi(\Omega_{3}^{2} + \Omega_{3} + \Omega_{2})","\psi(\Omega_{3} + \psi_{2}(\Omega_{3} + 1) + \psi_{1}(\Omega_{3} + \psi_{2}(\Omega_{3} + 1) + 1))"
+"\psi(\Omega_{3} + \Omega_{2}^{\omega} + \Omega_{2})","\psi(\psi_{2}(0) + \Omega_{2}^{\omega} + \psi_{1}(\psi_{2}(0) + \Omega_{2}^{\omega} + 1))"

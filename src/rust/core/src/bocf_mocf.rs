@@ -667,10 +667,7 @@ fn collapse_psi_next_cardinal(
                 }
                 if (is_next || is_above) && as_nat(&e).map_or(false, |n| n >= 2) {
                     // Finite-exponent lead lowers by one, keeping the
-                    // multiplier; Ω_s-built tails divide by Ω_s
-                    // (ψ_1(Ω_2^2+Ω_2·X) → ψ_1(Ω_2+X),
-                    //  ψ_1(Ω_3^2+Ω_3) → ψ_1(Ω_3+1)):
-                    //   Ω_s → 1, Ω_s·X → conv(X), Ω_s^e → Ω_s^{e-1}.
+                    // multiplier.
                     let new_lead = c_mul(
                         make_cardinalpow(&conv_ord(&s), &conv_ord(&pred_ord(&e))),
                         conv_ord(&mult),
@@ -679,6 +676,44 @@ fn collapse_psi_next_cardinal(
                         Ast::Num(n) => Ast::Num(n + 1),
                         other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
                     };
+                    if is_above {
+                        // Unified tail rule (lead type irrelevant): a single
+                        // tail Ω_a·m (a ≥ v+1, successor) collapses to
+                        // ψ_{a-1}(accumulated + m), where accumulated = the
+                        // lowered lead + all previously produced ψ terms; a
+                        // power tail Ω_a^n·m (n ≥ 2) lowers to Ω_a^{n-1}·m in
+                        // the outer (ψ_1(Ω_4^2+Ω_4+Ω_3+Ω_2) →
+                        // ψ_1(Ω_4+ψ_3(Ω_4+1)+ψ_2(Ω_4+ψ_3(Ω_4+1)+1)+ψ_1(...))).
+                        let mut parts: Vec<C> = vec![new_lead.clone()];
+                        let mut acc: Vec<C> = vec![new_lead.clone()];
+                        for b in &blocks[1..] {
+                            let (h2, m2) = split_head_mult(b);
+                            let (a_opt, is_pow) = match &h2 {
+                                Some(Head::Cardinal(t)) => (Some((*t).clone()), false),
+                                Some(Head::CardinalPow(t, _)) => (Some((*t).clone()), true),
+                                _ => (None, false),
+                            };
+                            if let Some(a) = a_opt {
+                                if is_successor_ord(&a) && sub_ord_leq(&vp1, &a) {
+                                    if is_pow {
+                                        parts.push(conv_ord(&translate_down(b)));
+                                    } else {
+                                        let mut psi_arg = acc.clone();
+                                        psi_arg.push(conv_sym(&card_arg_shift(&a, &m2)));
+                                        let psi_term = C::Psi(
+                                            Some(Box::new(conv_ord(&pred_ord(&a)))),
+                                            Box::new(c_sum(psi_arg)),
+                                        );
+                                        acc.push(psi_term.clone());
+                                        parts.push(psi_term);
+                                    }
+                                    continue;
+                                }
+                            }
+                            return None;
+                        }
+                        return Some(C::Psi(Some(Box::new(vc)), Box::new(c_sum(parts))));
+                    }
                     let mut parts: Vec<C> = vec![new_lead.clone()];
                     for b in &blocks[1..] {
                         let (h2, m2) = split_head_mult(b);
@@ -689,9 +724,9 @@ fn collapse_psi_next_cardinal(
                         };
                         if is_vp1 {
                             // Ω_{v+1}·k tail folds to +k
-                            // (ψ_1(Ω_3^2+Ω_2) → ψ_1(Ω_3+1)); an
+                            // (ψ_1(Ω_2^2+Ω_2) → ψ_1(Ω_2+1)); an
                             // Ω_{v+1}^e power tail (e ≥ 2) lowers by one
-                            // (ψ_1(Ω_3^2+Ω_2^2) → ψ_1(Ω_3+Ω_2)).
+                            // (ψ_1(Ω_2^2^... ) ...).
                             let folded = match b {
                                 Ast::Pow(_, e) if as_nat(e).map_or(false, |n| n >= 2) => {
                                     translate_down(b)
@@ -700,36 +735,6 @@ fn collapse_psi_next_cardinal(
                             };
                             parts.push(conv_ord(&folded));
                             continue;
-                        }
-                        // Ω_{s'}·X tail (s' > v+1) → ψ_{s'-1}(lead + M(X));
-                        // a ψ_{s'-1} factor X fully collapses. For s'=s this
-                        // is ψ_0's Ω_s·X rule; for s'≠s (e.g. ψ_1(Ω_4^2+Ω_3))
-                        // the lowered lead Ω_s is used.
-                        let s_tail = match &h2 {
-                            Some(Head::Cardinal(t)) => Some((*t).clone()),
-                            Some(Head::CardinalPow(t, _)) => Some((*t).clone()),
-                            _ => None,
-                        };
-                        if let Some(t) = s_tail {
-                            if is_successor_ord(&t) && sub_ord_lt(&vp1, &t) {
-                                let pred_t = pred_ord(&t);
-                                let is_psi_pred_factor = match &m2 {
-                                    Ast::Psi(Some(sub), _, ..) => ast_eq(sub, &pred_t),
-                                    Ast::Mul(p, _) => matches!(p.as_ref(),
-                                        Ast::Psi(Some(sub), _, ..) if ast_eq(sub, &pred_t)),
-                                    _ => false,
-                                };
-                                let xc = if is_psi_pred_factor {
-                                    conv_ord(&m2)
-                                } else {
-                                    conv_sym(&card_arg_shift(&t, &m2))
-                                };
-                                parts.push(C::Psi(
-                                    Some(Box::new(conv_ord(&pred_t))),
-                                    Box::new(c_sum(vec![new_lead.clone(), xc])),
-                                ));
-                                continue;
-                            }
                         }
                         return None;
                     }
@@ -795,36 +800,47 @@ fn collapse_psi_next_cardinal(
                 Ast::Num(n) => Ast::Num(n + 1),
                 other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
             };
-            // is_above: a leading tail successor cardinal Ω_{s'} above
-            // Ω_{v+1} collapses to ψ_{s'-1}(collapsed_lead + shift(m)), where
-            // collapsed_lead = ψ_{s-1}(σ(mult)) (ψ_1(Ω_4+Ω_3) →
-            // ψ_1(ψ_3(0)+ψ_2(ψ_3(0)+1))).
+            // is_above unified tail rule (same as the finite-exponent
+            // power-lead case): a bare tail Ω_a·m (a > v+1, successor)
+            // collapses to ψ_{a-1}(acc + shift(m)) where acc = the collapsed
+            // lead ψ_{s-1}(σ(mult)) + all previously produced ψ terms; a
+            // power tail Ω_a^n·m (finite n ≥ 2) lowers to Ω_a^{n-1}·m in the
+            // outer (ψ_1(Ω_4+Ω_3) → ψ_1(ψ_3(0)+ψ_2(ψ_3(0)+1)),
+            // ψ_1(Ω_5+Ω_3^2) → ψ_1(ψ_4(0)+Ω_3)).
             let mut above_card_parts: Vec<C> = Vec::new();
             if is_above {
                 let collapsed_lead = C::Psi(
                     Some(Box::new(conv_ord(&pred_ord(&s)))),
                     Box::new(sigma(&mult)),
                 );
+                let mut acc: Vec<C> = vec![collapsed_lead.clone()];
                 let mut i = 0usize;
                 while i < rest_blocks.len() {
                     let (h2, m2) = split_head_mult(&rest_blocks[i]);
-                    let ht = match &h2 {
+                    match &h2 {
                         Some(Head::Cardinal(t))
                             if is_successor_ord(t) && sub_ord_lt(&vp1, t) =>
                         {
-                            Some((*t).clone())
+                            let mut psi_arg = acc.clone();
+                            psi_arg.push(conv_sym(&card_arg_shift(t, &m2)));
+                            let psi_term = C::Psi(
+                                Some(Box::new(conv_ord(&pred_ord(t)))),
+                                Box::new(c_sum(psi_arg)),
+                            );
+                            acc.push(psi_term.clone());
+                            above_card_parts.push(psi_term);
+                            i += 1;
                         }
-                        _ => None,
-                    };
-                    if let Some(t) = ht {
-                        let xc = conv_sym(&card_arg_shift(&t, &m2));
-                        above_card_parts.push(C::Psi(
-                            Some(Box::new(conv_ord(&pred_ord(&t)))),
-                            Box::new(c_sum(vec![collapsed_lead.clone(), xc])),
-                        ));
-                        i += 1;
-                    } else {
-                        break;
+                        Some(Head::CardinalPow(t, e2))
+                            if is_successor_ord(t)
+                                && sub_ord_lt(&vp1, t)
+                                && as_nat(e2).map_or(false, |n| n >= 2) =>
+                        {
+                            above_card_parts
+                                .push(conv_ord(&translate_down(&rest_blocks[i])));
+                            i += 1;
+                        }
+                        _ => break,
                     }
                 }
                 rest_blocks = &rest_blocks[i..];
@@ -1892,10 +1908,14 @@ fn e_val_level(v_ast: &Ast, s_ast: &Ast, y: &Ast) -> C {
         return normalize_omegapow(conv_ord(y));
     }
     let mc = conv_struct_level(v_ast, s_ast, y);
+    // The contribution is ω^{E(y)}. Below Ω it is just ω^{mc}; above Ω,
+    // normalize_omegapow applies the fixed-point rules: ω^{Ω_s+β} = Ω_s·ω^β
+    // and ω^{Ω_s^λ} = Ω_s^{Ω_s^λ} for limit λ > ω
+    // (ψ(Ω_3+ψ_2(Ω_3+Ω_2+1)) → ψ(ψ_2(0)·Ω_2·ω)).
     if is_below_c(&mc) {
         C::OmegaPow(Box::new(mc))
     } else {
-        mc
+        normalize_omegapow(mc)
     }
 }
 
@@ -3587,9 +3607,32 @@ mod tests {
         // Finite-exponent lowering also applies above the collapse cardinal;
         // Ω_s tails follow the ψ_0 logic (Ω_s·X → ψ_{s-1}(Ω_s+M(X))).
         assert_eq!(conv("ψ_1(Ω_3^2+Ω_3)"), "\\psi_{1}(\\Omega_{3} + \\psi_{2}(\\Omega_{3} + 1))");
+        // Unified is_above tail rule: a single Ω_a·m tail (a ≥ v+1,
+        // successor) collapses to ψ_{a-1}(accumulated + m), accumulated =
+        // lowered lead + prior ψ terms; a power tail lowers by one.
         assert_eq!(
             conv("ψ_1(Ω_3^2+Ω_3+Ω_2)"),
-            "\\psi_{1}(\\Omega_{3} + \\psi_{2}(\\Omega_{3} + 1) + 1)"
+            "\\psi_{1}(\\Omega_{3} + \\psi_{2}(\\Omega_{3} + 1) + \\psi_{1}(\\Omega_{3} + \\psi_{2}(\\Omega_{3} + 1) + 1))"
+        );
+        assert_eq!(
+            conv("ψ_1(Ω_4^2+Ω_4+Ω_3+Ω_2)"),
+            "\\psi_{1}(\\Omega_{4} + \\psi_{3}(\\Omega_{4} + 1) + \\psi_{2}(\\Omega_{4} + \\psi_{3}(\\Omega_{4} + 1) + 1) + \\psi_{1}(\\Omega_{4} + \\psi_{3}(\\Omega_{4} + 1) + \\psi_{2}(\\Omega_{4} + \\psi_{3}(\\Omega_{4} + 1) + 1) + 1))"
+        );
+        assert_eq!(
+            conv("ψ_1(Ω_3^2+Ω_2)"),
+            "\\psi_{1}(\\Omega_{3} + \\psi_{1}(\\Omega_{3} + 1))"
+        );
+        assert_eq!(conv("ψ_1(Ω_3^2+Ω_2^2)"), "\\psi_{1}(\\Omega_{3} + \\Omega_{2})");
+        // Cardinal is_above lead: a power tail Ω_a^n (a > v+1, finite n ≥ 2)
+        // lowers to Ω_a^{n-1} in the outer (ψ_1(Ω_5+Ω_3^2) →
+        // ψ_1(ψ_4(0)+Ω_3)).
+        assert_eq!(conv("ψ_1(Ω_5+Ω_3^2)"), "\\psi_{1}(\\psi_{4}(0) + \\Omega_{3})");
+        // ψ_0(Ω_s + ψ_{s-1}(Ω_s+β)) → ψ(ψ_{s-1}(0)·ω^β): the E-value wraps
+        // Ω_s+β as ω^{Ω_s+β}=Ω_s·ω^β (ψ(Ω_3+ψ_2(Ω_3+Ω_2+1)) →
+        // ψ(ψ_2(0)·Ω_2·ω)).
+        assert_eq!(
+            conv("ψ(Ω_3+ψ_2(Ω_3+Ω_2+1))"),
+            "\\psi(\\psi_{2}(0)\\Omega_{2}\\omega)"
         );
         assert_eq!(conv("ψ_1(Ω_(ω+1)^2+Ω_(ω+1))"), "\\psi_{1}(\\Omega_{\\omega + 1} + \\psi_{\\omega}(\\Omega_{\\omega + 1} + 1))");
         // Ω_{s'} tail (s' ≠ s) → ψ_{s'-1}(lead + M(X)), both ψ_0 and ψ_v.

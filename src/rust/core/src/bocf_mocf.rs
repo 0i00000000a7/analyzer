@@ -987,13 +987,13 @@ fn finish_limit_tail(
             // cardinal Ω_{v+1}·m → m; a higher cardinal Ω_s2 (s2>v+1)
             // → ψ_{s2-1}(Ω_s·k + m); anything else translates down.
             let (h2, m2) = split_head_mult(b);
+            let vp1: Ast = match v {
+                Ast::Num(n) => Ast::Num(n + 1),
+                other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
+            };
             match &h2 {
                 Some(Head::Cardinal(s2)) => {
                     let s2_nat = as_nat(s2);
-                    let vp1: Ast = match v {
-                        Ast::Num(n) => Ast::Num(n + 1),
-                        other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
-                    };
                     let is_collapse_card = matches!((s2_nat, collapse_sub), (Some(a), Some(cs)) if a == cs)
                         || ast_eq(s2, &vp1);
                     let above_collapse = sub_ord_lt(&vp1, s2);
@@ -1046,7 +1046,20 @@ fn finish_limit_tail(
                     }
                 }
                 _ => {
-                    if matches!(v, Ast::Num(_)) && below_next_cardinal(v, b) {
+                    // A CardinalPow tail with a non-natural subscript above
+                    // the collapse cardinal stays whole in the argument — it
+                    // is never pulled out as a multiplicative factor
+                    // (ψ_ω(Ω_Ω+Ω_{ω×2}^2) stays ψ_ω(Ω_Ω+Ω_{ω×2}^2));
+                    // natural-subscript powers still lower (rows 663/673).
+                    // (The Ω_ω-lead case ψ_ω(Ω_ω+Ω_{ω×2}^2) is normalized to
+                    // ψ_ω(Ω_{ω×2}^2) by standard_form before reaching here.)
+                    let stays_above = matches!(&h2,
+                        Some(Head::CardinalPow(t, _))
+                            if !matches!(t, Ast::Num(_))
+                                && sub_ord_lt(&vp1, t));
+                    if stays_above {
+                        limit_arg_parts.push(conv_ord(b));
+                    } else if matches!(v, Ast::Num(_)) && below_next_cardinal(v, b) {
                         // natural level, tail below Ω_{v+1}: peel as ω^β
                         // (ψ_1(Ω_ω+Ω) → ψ_1(Ω_ω)·Ω).
                         factors.push(normalize_omegapow(conv_ord(b)));
@@ -1536,6 +1549,28 @@ fn raw_arg_for(b: &Ast) -> Option<C> {
     None
 }
 
+/// True when ψ_u(arg) is evaluable at its own level: the leading cardinal
+/// subscript of arg does not exceed u+1 (arg ≤ Ω_{u+1}·…), so conv_ord
+/// reduces it (ψ_1(Ω_2) → ψ_1(0)).
+fn psi_evaluable_at_own_level(sub: &Ast, arg: &Ast) -> bool {
+    let mut blocks = Vec::new();
+    flatten_add(arg, &mut blocks);
+    if blocks.is_empty() {
+        return true;
+    }
+    let (h, _) = split_head_mult(&blocks[0]);
+    let up1: Ast = match sub {
+        Ast::Num(n) => Ast::Num(n + 1),
+        other => Ast::Add(Box::new(other.clone()), Box::new(Ast::Num(1))),
+    };
+    match &h {
+        Some(Head::Cardinal(t)) | Some(Head::CardinalPow(t, _)) => sub_ord_leq(t, &up1),
+        // Bare Ω (=Ω_1) powers and below-Ω leads are evaluable.
+        Some(Head::OmegaPow(_)) => true,
+        None => true,
+    }
+}
+
 /// ψ₀(Ω_sub^n·k + r) with sub a successor, n finite ≥ 2 (rows 434-441):
 /// lead Ω_sub^{n-1}·k; tails Ω_sub·X become ψ_{sub-1}(Ω_sub + M(X)) and
 /// ψ_{sub-1}-arguments shift Ω_sub-powers down by one.
@@ -1648,9 +1683,15 @@ fn collapse_cardinalpow_succ(s: &Ast, n: i32, mult: &Ast, tail: &Ast) -> C {
                 }
                 has_bare = true;
                 let is_psi_pred_factor = match m {
-                    Ast::Psi(Some(sub), _, ..) => ast_eq(sub, &sub_idx),
-                    Ast::Mul(p, _) => matches!(p.as_ref(),
-                        Ast::Psi(Some(sub), _, ..) if ast_eq(sub, &sub_idx)),
+                    Ast::Psi(Some(sub), arg, ..) => {
+                        ast_eq(sub, &sub_idx) || psi_evaluable_at_own_level(sub, arg)
+                    }
+                    Ast::Mul(p, _) => match p.as_ref() {
+                        Ast::Psi(Some(sub), arg, ..) => {
+                            ast_eq(sub, &sub_idx) || psi_evaluable_at_own_level(sub, arg)
+                        }
+                        _ => false,
+                    },
                     _ => false,
                 };
                 let xc = if is_psi_pred_factor {
@@ -3639,6 +3680,15 @@ mod tests {
             conv("ψ_1(Ω_5+Ω_4^2+Ω_3)"),
             "\\psi_{1}(\\psi_{4}(0) + \\Omega_{4} + \\psi_{2}(\\psi_{4}(0) + \\Omega_{4} + 1))"
         );
+        // ψ_ω with a non-natural-subscript power tail above the collapse
+        // cardinal: the tail stays whole in the argument, never a factor
+        // (ψ_ω(Ω_Ω+Ω_{ω×2}^2) stays). A smaller lead is ordinally absorbed
+        // (ψ_ω(Ω_ω+Ω_{ω×2}^2) → ψ_ω(Ω_{ω×2}^2), like 1+ω=ω).
+        assert_eq!(
+            conv("ψ_ω(Ω_Ω+Ω_(ω×2)^2)"),
+            "\\psi_{\\omega}(\\Omega_{\\Omega} + \\Omega_{\\omega2}^{2})"
+        );
+        assert_eq!(conv("ψ_ω(Ω_ω+Ω_(ω×2)^2)"), "\\psi_{\\omega}(\\Omega_{\\omega2}^{2})");
         // ψ_0(Ω_s + ψ_{s-1}(Ω_s+β)) → ψ(ψ_{s-1}(0)·ω^β): the E-value wraps
         // Ω_s+β as ω^{Ω_s+β}=Ω_s·ω^β (ψ(Ω_3+ψ_2(Ω_3+Ω_2+1)) →
         // ψ(ψ_2(0)·Ω_2·ω)).

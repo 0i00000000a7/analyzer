@@ -1252,3 +1252,4 @@
 "\psi_{1}(\Omega_{3}^{\omega} + \Omega_{2})","\psi_{1}(\Omega_{3}^{\omega} + \psi_{1}(\Omega_{3}^{\omega} + 1))"
 "\psi_{1}(\Omega_{5} + \Omega_{3}^{2})","\psi_{1}(\psi_{4}(0) + \Omega_{3})"
 "\psi(\Omega_{3} + \psi_{2}(\Omega_{3} + \Omega_{2} + 1))","\psi(\psi_{2}(0)\Omega_{2}\omega)"
+"\psi_{1}(\Omega_{5} + \Omega_{4}^{2} + \Omega_{3})","\psi_{1}(\psi_{4}(0) + \Omega_{4} + \psi_{2}(\psi_{4}(0) + \Omega_{4} + 1))"

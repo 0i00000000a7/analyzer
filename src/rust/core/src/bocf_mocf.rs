@@ -694,19 +694,24 @@ fn collapse_psi_next_cardinal(
                                 _ => (None, false),
                             };
                             if let Some(a) = a_opt {
-                                if is_successor_ord(&a) && sub_ord_leq(&vp1, &a) {
-                                    if is_pow {
-                                        parts.push(conv_ord(&translate_down(b)));
-                                    } else {
-                                        let mut psi_arg = acc.clone();
-                                        psi_arg.push(conv_sym(&card_arg_shift(&a, &m2)));
-                                        let psi_term = C::Psi(
-                                            Some(Box::new(conv_ord(&pred_ord(&a)))),
-                                            Box::new(c_sum(psi_arg)),
-                                        );
-                                        acc.push(psi_term.clone());
-                                        parts.push(psi_term);
-                                    }
+                                if is_pow && is_successor_ord(&a) {
+                                    let lowered = conv_ord(&translate_down(b));
+                                    acc.push(lowered.clone());
+                                    parts.push(lowered);
+                                    continue;
+                                }
+                                if !is_pow
+                                    && is_successor_ord(&a)
+                                    && sub_ord_leq(&vp1, &a)
+                                {
+                                    let mut psi_arg = acc.clone();
+                                    psi_arg.push(conv_sym(&card_arg_shift(&a, &m2)));
+                                    let psi_term = C::Psi(
+                                        Some(Box::new(conv_ord(&pred_ord(&a)))),
+                                        Box::new(c_sum(psi_arg)),
+                                    );
+                                    acc.push(psi_term.clone());
+                                    parts.push(psi_term);
                                     continue;
                                 }
                             }
@@ -833,11 +838,11 @@ fn collapse_psi_next_cardinal(
                         }
                         Some(Head::CardinalPow(t, e2))
                             if is_successor_ord(t)
-                                && sub_ord_lt(&vp1, t)
                                 && as_nat(e2).map_or(false, |n| n >= 2) =>
                         {
-                            above_card_parts
-                                .push(conv_ord(&translate_down(&rest_blocks[i])));
+                            let lowered = conv_ord(&translate_down(&rest_blocks[i]));
+                            acc.push(lowered.clone());
+                            above_card_parts.push(lowered);
                             i += 1;
                         }
                         _ => break,
@@ -3627,6 +3632,13 @@ mod tests {
         // lowers to Ω_a^{n-1} in the outer (ψ_1(Ω_5+Ω_3^2) →
         // ψ_1(ψ_4(0)+Ω_3)).
         assert_eq!(conv("ψ_1(Ω_5+Ω_3^2)"), "\\psi_{1}(\\psi_{4}(0) + \\Omega_{3})");
+        // Everything to the left accumulates into the ψ argument with no
+        // restriction: the lowered power tail Ω_4 joins the ψ_2 argument
+        // (ψ_1(Ω_5+Ω_4^2+Ω_3) → ψ_1(ψ_4(0)+Ω_4+ψ_2(ψ_4(0)+Ω_4+1))).
+        assert_eq!(
+            conv("ψ_1(Ω_5+Ω_4^2+Ω_3)"),
+            "\\psi_{1}(\\psi_{4}(0) + \\Omega_{4} + \\psi_{2}(\\psi_{4}(0) + \\Omega_{4} + 1))"
+        );
         // ψ_0(Ω_s + ψ_{s-1}(Ω_s+β)) → ψ(ψ_{s-1}(0)·ω^β): the E-value wraps
         // Ω_s+β as ω^{Ω_s+β}=Ω_s·ω^β (ψ(Ω_3+ψ_2(Ω_3+Ω_2+1)) →
         // ψ(ψ_2(0)·Ω_2·ω)).
